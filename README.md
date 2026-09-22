@@ -26,22 +26,101 @@ These overhaul branches are the source of truth for integration decisions.
 
 ## Current version
 
-**0.2.2**
+**0.3.0**
 
 The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
 
-## 0.2.2 audit hardening
+## 0.3.0 adaptive broker
 
-A full code review added several safety fixes:
+The memory manager now implements the workload-sharing behavior the project is aiming for.
 
-- manager ownership records remain active even when detailed tag diagnostics are disabled, so `end()` can still release managed allocations safely
-- impossible alignment requests fail cleanly instead of risking size wrap
-- framebuffer PSRAM policy is enforced through both `allocateFramebuffer()` and generic `MemoryPurpose::Framebuffer` allocation
-- cached assets larger than the cache budget fail without evicting valid entries first
-- resizing a cached asset preserves the old entry until the replacement allocation succeeds
-- framebuffer, DMA pool, object pool, asset cache and managed-buffer accessors guard against stale backing allocations
-- automatic pressure handling continues enforcing fixed cache budgets while pressure remains high
-- unlimited-budget Warning handling no longer repeatedly reduces the cache every frame
+### Permanent manager control memory
+
+The broker does not guess a large fixed reservation. It calculates the exact compiled table requirement and adds a small permanent expansion margin.
+
+For ESP32-S3 / Arduino Core 2.0.17 with the current layout:
+
+- exact broker table requirement: **4,224 bytes**
+- configured expansion margin: **2,048 bytes**
+- final permanent broker arena after 1 KiB rounding: **7,168 bytes**
+- effective spare control headroom: **2,944 bytes**
+
+That arena is allocated from **internal RAM only** through `MemoryPurpose::Control`. It never falls back to PSRAM and is never offered to application workloads.
+
+The existing `MemoryManager` and `AutoMemory` singleton objects are already permanent compile-time storage. `AutoMemory::staticControlBytes()` reports that static footprint on the actual target, while `totalPermanentControlBytes()` reports static control storage plus the broker arena.
+
+The base manager mutex was also changed to static FreeRTOS storage, removing its previous hidden heap allocation.
+
+### Adaptive workload sharing
+
+The broker supports up to:
+
+- **16 workload clients**
+- **128 broker leases**
+
+Each client has:
+
+- priority
+- current activity state
+- automatic activity decay
+- minimum retained memory
+- soft budget
+- optional hard limit
+- observed memory usage
+- reclaimable memory
+- optional reclaim callback
+
+Soft budgets are guidance, **not fixed partitions**. A workload can grow beyond its soft budget while memory is available.
+
+When another workload needs memory, the broker prefers donors that are:
+
+1. lower priority
+2. less active
+3. above their soft budget
+4. holding more reclaimable memory
+
+### UI-aware behavior
+
+`AutoMemory::noteUIActivity()` marks both the UI and its asset cache active.
+
+While the UI is active, its cached assets are protected at the same workload importance as the UI. When UI activity stops, both automatically decay through Background to Idle and become increasingly suitable donor memory.
+
+This means an active application job can reclaim idle UI assets, while an active UI can retain/grow its working set instead of having assets treated as permanently low priority.
+
+### Elastic buffers
+
+`ElasticBuffer<T>` is explicitly reclaimable working memory.
+
+The broker may automatically release it when its owner becomes a lower-importance donor. The handle is invalidated safely, so callers do not retain a dangling pointer. When the workload becomes active again, `ensure()` can recreate the buffer.
+
+```cpp
+ElasticBuffer<uint8_t> uiWork;
+
+uiWork.begin(
+    &memory.broker(),
+    memory.uiClient(),
+    96 * 1024,
+    MemoryPurpose::General,
+    "ui-work"
+);
+
+// Later, after another workload reclaimed it:
+if (!uiWork.resident())
+{
+    uiWork.ensure();
+}
+```
+
+### Existing hardening retained
+
+- strict PSRAM framebuffer ownership
+- bitmap/scratch protection from internal-RAM spill
+- safe ownership bookkeeping
+- LRU cache eviction
+- replacement-safe cached assets
+- stale-pointer guards
+- fragmentation diagnostics
+- automatic Warning/Critical recovery
 
 ## Current NV3047 memory pressure
 
@@ -117,6 +196,19 @@ Features:
 - warning and critical memory-pressure states
 - pressure callbacks
 - reusable frame scratch arena
+
+### `MemoryBroker`
+
+Adaptive memory-sharing controller.
+
+It tracks workload importance rather than assigning permanent fixed partitions. Requests can trigger reclamation from less-important idle/background clients before retrying.
+
+The built-in `AutoMemory` setup registers:
+
+- driver-fixed — Critical, non-reclaimable framebuffer/DMA ownership
+- UI — elastic Normal-priority workload
+- assets — UI-linked reclaimable cache
+- application — elastic Normal-priority workload
 
 ### `AutoMemory`
 
@@ -442,6 +534,8 @@ For the complete system:
 The umbrella header exposes:
 
 - `MemoryManager`
+- `MemoryBroker`
+- `ElasticBuffer<T>`
 - `ManagedBuffer<T>`
 - `FramebufferPair`
 - `DMAPool`
@@ -466,6 +560,9 @@ NV3047_memorymanager/
 │   ├── NV3047_Memory.h
 │   ├── NV3047_MemoryManager.h
 │   ├── NV3047_MemoryManager.cpp
+│   ├── NV3047_MemoryBroker.h
+│   ├── NV3047_MemoryBroker.cpp
+│   ├── NV3047_ElasticBuffer.h
 │   ├── NV3047_ManagedBuffer.h
 │   ├── NV3047_FramebufferPair.h
 │   ├── NV3047_FramebufferPair.cpp
