@@ -609,7 +609,30 @@ void* MemoryManager::allocate(
     bool allowFallback =
         config_.allowFallback;
 
+    MemoryRegion region =
+        chooseRegion(
+            bytes,
+            purpose
+        );
+
     if (
+        purpose ==
+        MemoryPurpose::Framebuffer &&
+        config_.requirePSRAMForFramebuffer
+    )
+    {
+        if (!psram_available_)
+        {
+            noteFailure();
+            return nullptr;
+        }
+
+        region =
+            MemoryRegion::PSRAM;
+
+        allowFallback = false;
+    }
+    else if (
         purpose ==
         MemoryPurpose::Bitmap
     )
@@ -631,10 +654,7 @@ void* MemoryManager::allocate(
     return allocateTracked(
         bytes,
         purpose,
-        chooseRegion(
-            bytes,
-            purpose
-        ),
+        region,
         alignment,
         tag,
         allowFallback
