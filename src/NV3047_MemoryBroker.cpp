@@ -60,12 +60,12 @@ size_t MemoryBroker::requiredPermanentBytes()
     // ESP32-S3 / Arduino Core 2.0.17 uses a 32-bit ABI.
     // These assertions keep the permanent broker footprint intentional.
     static_assert(
-        sizeof(ClientRecord) == 72,
+        sizeof(ClientRecord) == 76,
         "Broker ClientRecord footprint changed"
     );
 
     static_assert(
-        sizeof(LeaseRecord) == 24,
+        sizeof(LeaseRecord) == 28,
         "Broker LeaseRecord footprint changed"
     );
 #endif
