@@ -1,146 +1,171 @@
 #include <Arduino.h>
-#include <NV3047_MemoryManager.h>
-#include <NV3047_ManagedBuffer.h>
+#include <NV3047_Memory.h>
 
 using namespace NV3047Memory;
 
-MemoryManager& memory =
-    MemoryManager::instance();
+AutoMemory& automaticMemory =
+    AutoMemory::instance();
 
-ManagedBuffer<uint16_t> iconBuffer;
-
-void onMemoryPressure(
-    MemoryPressure level,
-    const MemoryStats& stats
-)
+struct DemoWidgetNode
 {
-    Serial.print(
-        "Memory pressure changed: "
-    );
+    int value;
 
-    if (
-        level ==
-        MemoryPressure::Critical
+    explicit DemoWidgetNode(
+        int initialValue
     )
+        : value(initialValue)
     {
-        Serial.println("CRITICAL");
     }
-    else if (
-        level ==
-        MemoryPressure::Warning
-    )
-    {
-        Serial.println("WARNING");
-    }
-    else
-    {
-        Serial.println("NORMAL");
-    }
+};
 
-    Serial.print(
-        "Internal free: "
-    );
-    Serial.println(
-        stats.internal.freeBytes
-    );
+ObjectPool<DemoWidgetNode, 8>
+    widgetPool;
 
-    if (stats.psramAvailable)
-    {
-        Serial.print(
-            "PSRAM free: "
-        );
-        Serial.println(
-            stats.psram.freeBytes
-        );
-    }
-}
+static const uint16_t DEMO_ICON[16] =
+{
+    0xF800, 0xF800, 0x001F, 0x001F,
+    0xF800, 0xFFFF, 0xFFFF, 0x001F,
+    0x07E0, 0xFFFF, 0xFFFF, 0x07E0,
+    0x07E0, 0x07E0, 0xFFFF, 0xFFFF
+};
 
 void setup()
 {
     Serial.begin(115200);
     delay(500);
 
-    MemoryConfig config;
+    AutoMemoryConfig config;
 
-    config.internalReserveBytes =
+    config.memory.internalReserveBytes =
         48 * 1024;
 
-    config.psramReserveBytes =
+    config.memory.psramReserveBytes =
         128 * 1024;
 
-    config.scratchBytes =
+    config.memory.scratchBytes =
         64 * 1024;
 
-    if (!memory.begin(config))
+    config.allocateFramebufferPair =
+        true;
+
+    config.framebufferWidth = 480;
+    config.framebufferHeight = 272;
+
+    config.enableDMAPool = true;
+
+    // Matches the current driver's 10-line
+    // 480-wide RGB565 temporary DMA buffer.
+    config.dmaBlockBytes =
+        480 * 10 * sizeof(uint16_t);
+
+    config.dmaBlockCount = 2;
+
+    config.assetCacheBudgetBytes =
+        512 * 1024;
+
+    if (!automaticMemory.begin(config))
     {
         Serial.println(
-            "Memory manager start failed"
+            "Auto memory startup failed"
         );
 
         return;
     }
 
-    memory.setPressureCallback(
-        onMemoryPressure
-    );
+    MemoryManager& memory =
+        automaticMemory.memory();
 
-    // Example persistent RGB565 asset.
+    // Preallocated UI/control object pool.
     if (
-        iconBuffer.allocate(
-            64 * 64,
-            MemoryPurpose::Bitmap,
-            "demo-icon"
+        widgetPool.begin(
+            &memory,
+            "demo-widget-pool"
         )
     )
     {
+        DemoWidgetNode* node =
+            widgetPool.create(42);
+
+        if (node)
+        {
+            Serial.print(
+                "UI pool test value: "
+            );
+
+            Serial.println(
+                node->value
+            );
+
+            widgetPool.destroy(node);
+        }
+    }
+
+    // PSRAM-backed cached RGB565 asset.
+    uint16_t* icon =
+        automaticMemory.assets().
+            putRGB565(
+                0x1001,
+                DEMO_ICON,
+                16,
+                false
+            );
+
+    if (icon)
+    {
         Serial.println(
-            "RGB565 icon buffer allocated"
+            "Asset cache ready"
         );
     }
 
-    // Example of the allocation size used by one
-    // NV3047 480x272 RGB565 framebuffer.
-    uint16_t* testFramebuffer =
-        memory.allocateFramebuffer(
-            480,
-            272,
-            "demo-frame"
+    // Reusable internal DMA memory.
+    void* dma =
+        automaticMemory.dmaPool().
+            acquire();
+
+    if (dma)
+    {
+        Serial.println(
+            "DMA pool block acquired"
         );
 
-    if (testFramebuffer)
+        automaticMemory.dmaPool().
+            release(dma);
+    }
+
+    // Double framebuffer pair is already
+    // allocated and zeroed by AutoMemory.
+    if (
+        automaticMemory.framebuffers().
+            isReady()
+    )
     {
         Serial.print(
-            "Framebuffer bytes: "
+            "Framebuffer pair bytes: "
         );
 
         Serial.println(
-            memory.allocationSize(
-                testFramebuffer
-            )
-        );
-
-        // Demo only. A real driver integration
-        // would keep the framebuffer alive.
-        memory.release(
-            testFramebuffer
+            automaticMemory.framebuffers().
+                totalBytes()
         );
     }
 
-    memory.dump(Serial);
+    automaticMemory.dump(Serial);
 }
 
 void loop()
 {
-    // Recycle transient render memory once per frame.
-    memory.beginFrame();
+    // One reset recycles all transient
+    // rendering scratch memory for this frame.
+    automaticMemory.beginFrame();
 
     uint16_t* scanline =
         static_cast<uint16_t*>(
-            memory.scratch(
-                480 *
-                    sizeof(uint16_t),
-                4
-            )
+            automaticMemory.memory().
+                scratch(
+                    480 *
+                        sizeof(uint16_t),
+                    4
+                )
         );
 
     if (scanline)
@@ -151,12 +176,13 @@ void loop()
             ++x
         )
         {
-            scanline[x] =
-                0x0000;
+            scanline[x] = 0x0000;
         }
     }
 
-    memory.service();
+    // Automatic warning/critical pressure
+    // actions occur here.
+    automaticMemory.service();
 
     delay(16);
 }
