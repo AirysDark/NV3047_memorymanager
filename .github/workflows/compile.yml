@@ -33,3 +33,10 @@ jobs:
             --fqbn esp32:esp32:esp32s3 \
             --library . \
             examples/MemoryManagerDemo
+
+      - name: Compile AdaptiveStressTest for ESP32-S3
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --library . \
+            examples/AdaptiveStressTest
