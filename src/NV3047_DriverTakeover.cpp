@@ -243,13 +243,18 @@ void providerBeginFrame() {
         return;
     }
 
-    NV3047Memory::AutoMemory& automatic =
-        NV3047Memory::AutoMemory::instance();
+    if (!nv3047_memorymanager_autoruntime_lock()) {
+        return;
+    }
 
-    // Real display-frame activity is the automatic UI activity signal.
-    // No sketch-side noteUIActivity() call is required.
-    automatic.noteUIActivity();
-    automatic.beginFrame();
+    // A display swap defines scratch lifetime, but it does not by itself mean
+    // the UI is a heavy workload. Real UI-owned broker allocations/touches
+    // raise activity automatically; future UI integration can also report
+    // genuine input/activity internally without sketch-side calls.
+    NV3047Memory::AutoMemory::instance().
+        beginFrame();
+
+    nv3047_memorymanager_autoruntime_unlock();
 }
 
 void providerService() {
@@ -257,8 +262,14 @@ void providerService() {
         return;
     }
 
+    if (!nv3047_memorymanager_autoruntime_lock()) {
+        return;
+    }
+
     NV3047Memory::AutoMemory::instance().
         service();
+
+    nv3047_memorymanager_autoruntime_unlock();
 }
 
 void* providerAcquireDMA(
