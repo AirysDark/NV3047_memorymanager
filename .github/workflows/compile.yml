@@ -27,6 +27,13 @@ jobs:
         run: |
           arduino-cli core install esp32:esp32@2.0.17
 
+      - name: Checkout NV3047 drivers
+        uses: actions/checkout@v4
+        with:
+          repository: AirysDark/NV3047_drivers
+          ref: driver_overhaul_v2
+          path: external/NV3047_drivers
+
       - name: Compile MemoryManagerDemo for ESP32-S3
         run: |
           arduino-cli compile \
@@ -40,3 +47,11 @@ jobs:
             --fqbn esp32:esp32:esp32s3 \
             --library . \
             examples/AdaptiveStressTest
+
+      - name: Compile DriverTakeoverTest with NV3047 drivers
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --library . \
+            --library external/NV3047_drivers \
+            examples/DriverTakeoverTest
