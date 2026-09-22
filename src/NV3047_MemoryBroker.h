@@ -410,7 +410,8 @@ private:
 
     int findOldestElasticLease(
         BrokerClientId client,
-        size_t maximumBytes
+        size_t maximumBytes,
+        MemoryRegion targetRegion
     ) const;
 
     size_t reclaimElastic(
