@@ -1099,7 +1099,8 @@ int MemoryBroker::findLease(
 
 int MemoryBroker::findOldestElasticLease(
     BrokerClientId client,
-    size_t maximumBytes
+    size_t maximumBytes,
+    MemoryRegion targetRegion
 ) const
 {
     int candidate = -1;
@@ -1118,7 +1119,11 @@ int MemoryBroker::findOldestElasticLease(
             !lease.used ||
             !lease.reclaimable ||
             lease.client != client ||
-            lease.bytes > maximumBytes
+            lease.bytes > maximumBytes ||
+            !regionCanSatisfy(
+                lease.region,
+                targetRegion
+            )
         )
         {
             continue;
