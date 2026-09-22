@@ -214,6 +214,19 @@ public:
 
     bool owns(const void* pointer) const;
     size_t allocationSize(const void* pointer) const;
+    MemoryRegion allocationRegion(const void* pointer) const;
+
+    // Public policy/heap queries used by the adaptive broker.
+    MemoryRegion preferredRegion(
+        size_t bytes,
+        MemoryPurpose purpose
+    ) const;
+
+    HeapStats regionStats(
+        MemoryRegion region
+    ) const;
+
+    bool validate() const;
 
     // Per-frame transient arena.
     void beginFrame();
