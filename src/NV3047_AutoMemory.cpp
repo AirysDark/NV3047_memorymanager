@@ -307,13 +307,34 @@ BrokerClientId AutoMemory::applicationClient() const
 
 bool AutoMemory::noteUIActivity()
 {
-    return
-        broker_.isReady() &&
-        ui_client_ !=
-            INVALID_BROKER_CLIENT &&
+    if (
+        !broker_.isReady() ||
+        ui_client_ ==
+            INVALID_BROKER_CLIENT
+    )
+    {
+        return false;
+    }
+
+    const bool uiActive =
         broker_.noteActivity(
             ui_client_
         );
+
+    // UI assets follow UI activity. While the UI is actively being used,
+    // its cached assets have the same importance as the UI itself. Once the
+    // UI goes idle, those assets decay to a donor state automatically.
+    if (
+        asset_client_ !=
+        INVALID_BROKER_CLIENT
+    )
+    {
+        broker_.noteActivity(
+            asset_client_
+        );
+    }
+
+    return uiActive;
 }
 
 bool AutoMemory::noteApplicationActivity()
@@ -528,7 +549,7 @@ bool AutoMemory::registerBrokerClients()
         "assets";
 
     assetConfig.priority =
-        BrokerPriority::Low;
+        BrokerPriority::Normal;
 
     assetConfig.softLimitBytes =
         config_.assetCacheBudgetBytes;
