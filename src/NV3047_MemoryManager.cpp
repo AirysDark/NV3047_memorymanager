@@ -1438,6 +1438,12 @@ void* MemoryManager::scratch(
             alignment
         );
 
+    if (alignment == 0)
+    {
+        noteFailure();
+        return nullptr;
+    }
+
     lock();
 
     const uintptr_t base =
@@ -1447,6 +1453,17 @@ void* MemoryManager::scratch(
 
     const uintptr_t current =
         base + scratch_offset_;
+
+    if (
+        current >
+        UINTPTR_MAX -
+            (alignment - 1)
+    )
+    {
+        ++failed_allocations_;
+        unlock();
+        return nullptr;
+    }
 
     const uintptr_t aligned =
         (
@@ -1509,6 +1526,36 @@ void MemoryManager::resetScratch()
     lock();
     scratch_offset_ = 0;
     unlock();
+}
+
+size_t MemoryManager::scratchMark() const
+{
+    return scratchUsed();
+}
+
+bool MemoryManager::rewindScratch(
+    size_t mark
+)
+{
+    if (!ready_)
+    {
+        return false;
+    }
+
+    lock();
+
+    if (mark > scratch_offset_)
+    {
+        unlock();
+        return false;
+    }
+
+    scratch_offset_ =
+        mark;
+
+    unlock();
+
+    return true;
 }
 
 size_t MemoryManager::scratchCapacity() const
