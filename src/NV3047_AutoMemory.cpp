@@ -671,7 +671,8 @@ void AutoMemory::syncBrokerUsage()
         broker_.setObservedUsage(
             asset_client_,
             cache.usedBytes,
-            cache.reclaimableBytes
+            cache.reclaimableBytes,
+            MemoryRegion::PSRAM
         );
     }
 }
@@ -942,6 +943,53 @@ size_t AutoMemory::emergencyPurge()
     syncBrokerUsage();
 
     return freed;
+}
+
+bool AutoMemory::validate() const
+{
+    if (
+        !ready_ ||
+        !manager_ ||
+        !manager_->isReady() ||
+        !manager_->validate() ||
+        !assets_.validate()
+    )
+    {
+        return false;
+    }
+
+    if (
+        broker_.isReady() &&
+        !broker_.validate()
+    )
+    {
+        return false;
+    }
+
+    if (
+        framebuffer_ready_ &&
+        !framebuffers_.isReady()
+    )
+    {
+        return false;
+    }
+
+    if (
+        dma_ready_ &&
+        (
+            dma_pool_.blockCount() == 0 ||
+            (
+                dma_pool_.usedCount() +
+                dma_pool_.freeCount()
+            ) !=
+                dma_pool_.blockCount()
+        )
+    )
+    {
+        return false;
+    }
+
+    return true;
 }
 
 void AutoMemory::dump(
