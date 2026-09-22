@@ -94,6 +94,14 @@ bool AutoMemory::begin(
 
     ready_ = true;
 
+    const MemoryPressure initialPressure =
+        manager_->pressure();
+
+    applyPressurePolicy(
+        initialPressure,
+        true
+    );
+
     last_pressure_ =
         manager_->pressure();
 
@@ -159,51 +167,17 @@ void AutoMemory::service()
     const MemoryPressure current =
         manager_->pressure();
 
-    if (
-        current != last_pressure_
-    )
-    {
-        if (
-            current ==
-            MemoryPressure::Warning
-        )
-        {
-            assets_.trimToPercent(
-                config_.
-                    warningCachePercent
-            );
+    const bool stateChanged =
+        current != last_pressure_;
 
-            ++pressure_actions_;
-        }
-        else if (
-            current ==
-            MemoryPressure::Critical
-        )
-        {
-            if (
-                config_.
-                    purgeUnpinnedOnCritical
-            )
-            {
-                assets_.
-                    purgeUnpinned();
-            }
+    applyPressurePolicy(
+        current,
+        stateChanged
+    );
 
-            if (
-                config_.
-                    resetScratchOnCritical
-            )
-            {
-                manager_->
-                    resetScratch();
-            }
-
-            ++pressure_actions_;
-        }
-
-        last_pressure_ =
-            current;
-    }
+    // Recovery actions can change the pressure state immediately.
+    last_pressure_ =
+        manager_->pressure();
 }
 
 MemoryManager& AutoMemory::memory()
@@ -240,6 +214,96 @@ MemoryPressure AutoMemory::pressure() const
     }
 
     return manager_->pressure();
+}
+
+void AutoMemory::applyPressurePolicy(
+    MemoryPressure current,
+    bool stateChanged
+)
+{
+    bool acted = false;
+
+    if (
+        current ==
+        MemoryPressure::Warning
+    )
+    {
+        const AssetCache::Stats before =
+            assets_.stats();
+
+        size_t reference =
+            before.budgetBytes;
+
+        if (reference == 0)
+        {
+            reference =
+                before.usedBytes;
+        }
+
+        const uint8_t percent =
+            config_.warningCachePercent > 100
+                ? 100
+                : config_.warningCachePercent;
+
+        const size_t target =
+            (
+                reference *
+                percent
+            ) /
+            100;
+
+        if (before.usedBytes > target)
+        {
+            assets_.trimToBytes(target);
+
+            const AssetCache::Stats after =
+                assets_.stats();
+
+            acted =
+                after.usedBytes <
+                before.usedBytes;
+        }
+    }
+    else if (
+        current ==
+        MemoryPressure::Critical
+    )
+    {
+        if (
+            config_.
+                purgeUnpinnedOnCritical
+        )
+        {
+            acted =
+                assets_.purgeUnpinned() > 0 ||
+                acted;
+        }
+
+        // Reset scratch once on entry to Critical. beginFrame()
+        // already recycles it on following frames.
+        if (
+            config_.
+                resetScratchOnCritical &&
+            stateChanged
+        )
+        {
+            if (
+                manager_->
+                    scratchUsed() > 0
+            )
+            {
+                acted = true;
+            }
+
+            manager_->
+                resetScratch();
+        }
+    }
+
+    if (acted)
+    {
+        ++pressure_actions_;
+    }
 }
 
 float AutoMemory::fragmentationPercent(
