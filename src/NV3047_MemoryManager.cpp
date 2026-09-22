@@ -46,7 +46,10 @@ bool MemoryManager::begin(
         return true;
     }
 
-    mutex_ = xSemaphoreCreateMutex();
+    mutex_ =
+        xSemaphoreCreateMutexStatic(
+            &mutex_storage_
+        );
 
     if (!mutex_)
     {
@@ -181,11 +184,8 @@ void MemoryManager::end()
     psram_available_ = false;
     pressure_callback_ = nullptr;
 
-    if (mutex_)
-    {
-        vSemaphoreDelete(mutex_);
-        mutex_ = nullptr;
-    }
+    // mutex_storage_ is permanent object storage; no heap memory is freed.
+    mutex_ = nullptr;
 }
 
 bool MemoryManager::isReady() const
