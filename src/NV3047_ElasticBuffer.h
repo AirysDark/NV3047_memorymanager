@@ -208,32 +208,6 @@ public:
         return data_;
     }
 
-    T& operator[](
-        size_t index
-    )
-    {
-        broker_->touch(
-            client_,
-            data_
-        );
-
-        return data_[index];
-    }
-
-    const T& operator[](
-        size_t index
-    ) const
-    {
-        const_cast<MemoryBroker*>(
-            broker_
-        )->touch(
-            client_,
-            data_
-        );
-
-        return data_[index];
-    }
-
     size_t size() const
     {
         return
