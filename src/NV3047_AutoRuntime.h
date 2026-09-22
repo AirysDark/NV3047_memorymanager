@@ -37,6 +37,9 @@ struct AutoRuntimeStats
     uint32_t failedStarts = 0;
     uint32_t backgroundServicePasses = 0;
 
+    size_t runtimeStackBytes = 0;
+    size_t minimumFreeStackBytes = 0;
+
     // Permanent compile-time storage used by the background runtime task,
     // mutex and state. The broker arena is reported separately by AutoMemory.
     size_t staticRuntimeBytes = 0;
