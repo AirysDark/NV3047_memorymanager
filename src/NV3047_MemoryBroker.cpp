@@ -1687,7 +1687,8 @@ bool MemoryBroker::owns(
 
 size_t MemoryBroker::reclaimElastic(
     BrokerClientId client,
-    size_t targetBytes
+    size_t targetBytes,
+    MemoryRegion targetRegion
 )
 {
     if (
@@ -1743,7 +1744,8 @@ size_t MemoryBroker::reclaimElastic(
                 ? -1
                 : findOldestElasticLease(
                       client,
-                      maximumBytes
+                      maximumBytes,
+                      targetRegion
                   );
 
         if (index >= 0)
@@ -1884,7 +1886,8 @@ void MemoryBroker::refreshActivities(
 int MemoryBroker::findBestDonor(
     BrokerClientId requester,
     uint16_t attemptedMask,
-    BrokerReclaimReason reason
+    BrokerReclaimReason reason,
+    MemoryRegion targetRegion
 ) const
 {
     const ClientRecord* requesterRecord =
@@ -1940,7 +1943,8 @@ int MemoryBroker::findBestDonor(
 
         const size_t reclaimable =
             availableReclaim(
-                donor
+                donor,
+                targetRegion
             );
 
         if (reclaimable == 0)
@@ -2014,7 +2018,8 @@ int MemoryBroker::findBestDonor(
 size_t MemoryBroker::reclaimFor(
     BrokerClientId requester,
     size_t targetBytes,
-    BrokerReclaimReason reason
+    BrokerReclaimReason reason,
+    MemoryRegion targetRegion
 )
 {
     if (
@@ -2053,7 +2058,8 @@ size_t MemoryBroker::reclaimFor(
             findBestDonor(
                 requester,
                 attemptedMask,
-                reason
+                reason,
+                targetRegion
             );
 
         if (donorIndex >= 0)
@@ -2071,13 +2077,20 @@ size_t MemoryBroker::reclaimFor(
                 donor.userData;
 
             externalAvailable =
-                callback
+                (
+                    callback &&
+                    regionCanSatisfy(
+                        donor.observedRegion,
+                        targetRegion
+                    )
+                )
                     ? donor.reclaimableBytes
                     : 0;
 
             totalAvailable =
                 availableReclaim(
-                    donor
+                    donor,
+                    targetRegion
                 );
         }
 
@@ -2214,7 +2227,8 @@ size_t MemoryBroker::reclaimFor(
                 reclaimElastic(
                     donorId,
                     ask -
-                        donorFreed
+                        donorFreed,
+                    targetRegion
                 );
 
             if (
