@@ -1,221 +1,436 @@
 # NV3047 Memory Manager
 
-Automatic ESP32-S3 memory management for the NV3047 display stack.
+Automatic memory control for the NV3047 ESP32-S3 display stack.
 
-This library is designed to become the shared memory layer for:
+This repository is the dedicated memory subsystem for:
 
 - `NV3047_drivers`
 - `NV3047_UI`
 
-The two projects above are reference dependencies only. This repository owns all memory-manager code.
+The driver and UI repositories are currently read-only references. All development and changes for memory management live in this repository.
 
 ## Target
 
 - ESP32-S3
-- Arduino ESP32 Core 2.0.17
-- PSRAM-aware
-- RGB565 display workloads
+- Arduino ESP32 Core **2.0.17**
+- PSRAM-backed 480 x 272 RGB565 graphics
 - deterministic embedded allocations
+- low-fragmentation long-running UI applications
 
-## Why this exists
+## Current version
 
-The current NV3047 driver allocates two 480 x 272 RGB565 framebuffers. Each framebuffer is 261,120 bytes, for 522,240 bytes total. It also creates temporary DMA-capable screen-fill memory. The current UI creates dynamic widget list nodes.
+**0.2.0**
 
-Those are exactly the kinds of allocations this manager is intended to centralise.
+The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
 
-## Main features
+## Current NV3047 memory pressure
 
-- Automatic Internal RAM / PSRAM / DMA selection
-- Fixed-reserve protection so display allocations cannot consume every free byte
-- 64-byte aligned framebuffer helpers
-- RGB565 bitmap helpers
-- DMA-capable allocation helper
-- Reusable per-frame scratch arena
-- Allocation ownership tracking
-- Tags for diagnostics and grouped cleanup
-- Peak/high-water tracking
-- Internal and PSRAM heap statistics
-- Largest-free-block reporting for fragmentation visibility
-- Low-memory pressure states and callback
-- Safe fallback policy
-- RAII `ManagedBuffer<T>`
-- No STL containers and no dynamic bookkeeping tables
+The reference driver currently uses two 480 x 272 RGB565 framebuffers:
 
-## Basic use
+- one framebuffer: **261,120 bytes**
+- two framebuffers: **522,240 bytes**
+
+The current driver also creates a 10-line RGB565 DMA-compatible temporary buffer:
+
+- 480 x 10 x 2 bytes = **9,600 bytes**
+
+The current UI dynamically creates widget-list nodes.
+
+The memory manager is designed to take ownership of all three categories when the other libraries are later connected to it.
+
+## Architecture
+
+```text
+                    NV3047 application
+                           |
+                    NV3047_AutoMemory
+                           |
+        +------------------+------------------+
+        |                  |                  |
+ FramebufferPair       AssetCache          DMAPool
+        |                  |                  |
+  PSRAM RGB565       PSRAM RGB565       Internal DMA
+        |                  |                  |
+        +------------------+------------------+
+                           |
+                    MemoryManager
+                           |
+          +----------------+----------------+
+          |                |                |
+      Internal RAM       PSRAM          DMA RAM
+          |
+      ObjectPool<T>
+      UI/control nodes
+```
+
+## Main components
+
+### `MemoryManager`
+
+Core policy allocator.
+
+Features:
+
+- automatic Internal RAM / PSRAM / DMA selection
+- allocation purpose classification
+- configurable internal-RAM reserve
+- configurable PSRAM reserve
+- 64-byte aligned framebuffer allocation
+- RGB565 allocation helpers
+- DMA-only allocation helpers
+- allocation tagging
+- grouped cleanup by tag
+- ownership checking
+- tracked allocation size
+- high-water statistics
+- failed-allocation counters
+- minimum-free-heap statistics
+- largest-free-block statistics
+- warning and critical memory-pressure states
+- pressure callbacks
+- reusable frame scratch arena
+
+### `AutoMemory`
+
+High-level automatic controller.
+
+It can start the complete memory system with one call and preallocate:
+
+- a double framebuffer pair
+- a reusable DMA block pool
+- a PSRAM asset cache
+- the base scratch arena
+
+It also performs automatic pressure recovery from `service()`.
+
+### `FramebufferPair`
+
+Owns a complete double-buffer set.
+
+Default NV3047 configuration:
+
+```text
+front: 480 x 272 RGB565
+back : 480 x 272 RGB565
+total: 522,240 bytes
+```
+
+Features:
+
+- PSRAM-first allocation
+- 64-byte alignment
+- front/back role tracking
+- role swap without reallocating
+- fast 32-bit clear
+- zeroed startup buffers
+
+### `DMAPool`
+
+Preallocates reusable DMA-capable internal-RAM blocks.
+
+This replaces repeated `heap_caps_malloc(... MALLOC_CAP_DMA)` / free cycles with stable reusable blocks.
+
+The default automatic configuration creates two 9,600-byte blocks, matching the current driver's 10-line temporary screen-fill buffer size.
+
+### `AssetCache`
+
+PSRAM-oriented cache for RGB565 images, icons and other graphical data.
+
+Features:
+
+- fixed metadata table
+- no STL containers
+- configurable byte budget
+- 32-bit asset keys
+- cache hit/miss statistics
+- pinned assets
+- least-recently-used eviction
+- automatic room creation
+- emergency unpinned purge
+- peak cache usage statistics
+
+### `ObjectPool<T, Capacity>`
+
+Fixed-capacity typed object pool intended for UI/control structures such as widget nodes.
+
+Features:
+
+- one stable backing allocation
+- placement construction
+- destructor-aware release
+- exact `alignas(T)` storage
+- no per-object heap allocation
+- no per-object heap fragmentation
+
+### Per-frame scratch arena
+
+Temporary rendering memory is allocated linearly from a preallocated arena:
 
 ```cpp
-#include <NV3047_MemoryManager.h>
+automaticMemory.beginFrame();
+
+void* temporary =
+    automaticMemory.memory().scratch(
+        4096,
+        16
+    );
+```
+
+At the beginning of the next frame, the entire temporary area is recycled in constant time.
+
+No individual `free()` calls are required.
+
+## Recommended automatic startup
+
+```cpp
+#include <NV3047_Memory.h>
 
 using namespace NV3047Memory;
 
-MemoryManager& memory = MemoryManager::instance();
+AutoMemory& memory =
+    AutoMemory::instance();
 
 void setup()
 {
-    Serial.begin(115200);
+    AutoMemoryConfig config;
 
-    MemoryConfig config;
-    config.scratchBytes = 64 * 1024;
+    config.framebufferWidth = 480;
+    config.framebufferHeight = 272;
+
+    config.memory.scratchBytes =
+        64 * 1024;
+
+    config.assetCacheBudgetBytes =
+        512 * 1024;
+
+    config.dmaBlockBytes =
+        480 * 10 * sizeof(uint16_t);
+
+    config.dmaBlockCount = 2;
 
     if (!memory.begin(config))
     {
-        Serial.println("Memory manager failed to start");
+        // Memory system could not reserve
+        // the required resources.
         return;
     }
-
-    memory.dump(Serial);
-}
-
-void loop()
-{
-    memory.beginFrame();
-
-    // Temporary memory is reused next frame instead of malloc/free churn.
-    uint16_t* line =
-        static_cast<uint16_t*>(
-            memory.scratch(480 * sizeof(uint16_t), 4)
-        );
-
-    if (line)
-    {
-        // render/build temporary data...
-    }
-
-    memory.service();
 }
 ```
 
-## Purpose-based automatic placement
+## Automatic placement policy
 
-`MemoryManager::allocate()` uses the allocation purpose to choose memory automatically.
-
-| Purpose | Preferred memory |
+| Allocation | Preferred region |
 |---|---|
-| General small allocation | Internal RAM |
-| General large allocation | PSRAM |
+| small general/control allocation | Internal RAM |
+| large general allocation | PSRAM |
 | UI object | Internal RAM |
-| Framebuffer | PSRAM |
-| Bitmap / image asset | PSRAM |
-| Scratch | PSRAM |
-| DMA | Internal DMA-capable RAM |
+| framebuffer | PSRAM |
+| bitmap / RGB565 asset | PSRAM |
+| frame scratch | PSRAM |
+| DMA transfer memory | DMA-capable Internal RAM |
 
-If the preferred region cannot satisfy the request, the manager can fall back to another safe region when the configuration allows it. DMA allocations never fall back to non-DMA memory.
+The manager protects configurable reserve amounts before approving allocations.
 
-## NV3047-specific helpers
+DMA requests never fall back into memory that is not DMA capable.
+
+## Automatic pressure handling
+
+`AutoMemory::service()` checks the base manager pressure state.
+
+### Warning
+
+The asset cache is trimmed toward the configured warning percentage.
+
+### Critical
+
+The automatic controller can:
+
+- purge all unpinned cached assets
+- reset transient scratch usage
+- preserve pinned assets
+- preserve live framebuffers
+- preserve active UI objects
+- preserve DMA pool ownership
+
+The manager deliberately does **not** destroy live persistent application objects simply to recover RAM.
+
+## Fragmentation monitoring
+
+The automatic controller reports fragmentation independently for:
+
+- internal RAM
+- PSRAM
+
+The estimate is calculated from total free memory versus the largest contiguous free block.
 
 ```cpp
-uint16_t* framebuffer =
-    memory.allocateFramebuffer(480, 272, "frame-a");
+FragmentationStats frag =
+    memory.fragmentation();
 
+Serial.println(
+    frag.internalPercent
+);
+```
+
+This gives a direct indication of whether enough total memory exists but has become divided into unusable small blocks.
+
+## RGB565 asset cache
+
+```cpp
 uint16_t* icon =
-    memory.allocateRGB565(64 * 64, "settings-icon");
+    memory.assets().putRGB565(
+        0x1001,
+        sourcePixels,
+        pixelCount,
+        false
+    );
 
+uint16_t* cached =
+    static_cast<uint16_t*>(
+        memory.assets().get(
+            0x1001
+        )
+    );
+```
+
+Set the final argument to `true` to pin an asset so pressure recovery will not evict it.
+
+## DMA pool
+
+```cpp
 void* dma =
-    memory.allocateDMA(9600, 4, "display-fill");
-```
+    memory.dmaPool().acquire();
 
-## Per-frame scratch memory
-
-Repeated temporary allocations are a major source of fragmentation. The manager can reserve a scratch arena once, then recycle it every frame.
-
-```cpp
-memory.beginFrame();
-
-void* workA = memory.scratch(2048, 16);
-void* workB = memory.scratch(4096, 32);
-
-// All scratch allocations become reusable together:
-memory.resetScratch();
-```
-
-Scratch memory is never individually freed.
-
-## Memory pressure monitoring
-
-```cpp
-void onPressure(
-    MemoryPressure level,
-    const MemoryStats& stats
-)
+if (dma)
 {
-    if (level == MemoryPressure::Critical)
-    {
-        // Drop optional caches/assets here.
-    }
-}
+    // use DMA memory
 
-void setup()
-{
-    memory.begin();
-    memory.setPressureCallback(onPressure);
+    memory.dmaPool().release(
+        dma
+    );
 }
 ```
 
-Call `memory.service()` from the application loop. The callback fires when the pressure level changes.
+The block remains allocated to the pool and is immediately reusable.
 
-## Read-only integration map
-
-No changes are made by this repository to the driver or UI projects.
-
-When those projects are later wired to this library, the intended replacements are:
-
-### NV3047_drivers
-
-Current framebuffer allocation:
+## UI object pool
 
 ```cpp
-heap_caps_aligned_alloc(...)
+struct WidgetNode
+{
+    void* widget;
+    WidgetNode* next;
+    uint8_t z;
+};
+
+ObjectPool<WidgetNode, 64> nodes;
+
+nodes.begin(
+    &memory.memory(),
+    "widget-nodes"
+);
+
+WidgetNode* node =
+    nodes.create();
+
+nodes.destroy(node);
 ```
 
-Target:
+This is the intended future replacement for repeated UI widget-node `new` / `delete` operations.
+
+## Future driver takeover
+
+When `NV3047_drivers` is later changed to allow this repository to control its memory, the intended ownership becomes:
+
+```text
+Current driver Framebuffer::buffer_a
+    -> AutoMemory::framebuffers().front/back
+
+Current driver Framebuffer::buffer_b
+    -> AutoMemory::framebuffers().front/back
+
+Current DisplayDriver temporary DMA malloc
+    -> AutoMemory::dmaPool().acquire()
+
+Current repeated graphical asset allocations
+    -> AutoMemory::assets()
+```
+
+The driver should no longer independently allocate its own framebuffer memory after takeover.
+
+## Future UI takeover
+
+When `NV3047_UI` is later connected:
+
+```text
+Widget nodes
+    -> ObjectPool
+
+temporary render/layout working memory
+    -> frame scratch arena
+
+runtime icons/images
+    -> AssetCache
+
+large UI data
+    -> MemoryManager automatic allocator
+```
+
+This keeps the UI focused on rendering and layout while this library decides where memory lives.
+
+## Public include
+
+For the complete system:
 
 ```cpp
-MemoryManager::instance().allocateFramebuffer(...)
+#include <NV3047_Memory.h>
 ```
 
-Current temporary DMA allocation in `DisplayDriver::fillScreen()`:
+The umbrella header exposes:
 
-```cpp
-heap_caps_malloc(..., MALLOC_CAP_DMA)
-```
-
-Target:
-
-```cpp
-MemoryManager::instance().allocateDMA(...)
-```
-
-### NV3047_UI
-
-Current widget-node creation uses `new WidgetNode`. A later UI integration can route widget metadata through manager-owned allocations or a dedicated node pool.
-
-The memory manager deliberately does not override global `new` or `malloc`. Global overrides would make unrelated ESP32/Arduino components dependent on this library and would make failures harder to isolate.
-
-## Design rules
-
-1. PSRAM stores large graphical data.
-2. Internal RAM is protected for the ESP32 runtime, stacks, networking, and control objects.
-3. DMA requests always use DMA-capable internal memory.
-4. Temporary render memory should use the scratch arena.
-5. Every persistent manager allocation can be tracked and tagged.
-6. The manager never silently frees a live persistent allocation to recover memory.
-7. Allocation failure is explicit and measurable.
+- `MemoryManager`
+- `ManagedBuffer<T>`
+- `FramebufferPair`
+- `DMAPool`
+- `ObjectPool<T, Capacity>`
+- `AssetCache`
+- `AutoMemory`
 
 ## Repository layout
 
 ```text
 NV3047_memorymanager/
-├── library.properties
-├── README.md
+├── .github/
+│   └── workflows/
+│       └── compile.yml
+├── docs/
+│   └── INTEGRATION_PLAN.md
 ├── examples/
 │   └── MemoryManagerDemo/
 │       └── MemoryManagerDemo.ino
-└── src/
-    ├── NV3047_MemoryManager.h
-    ├── NV3047_MemoryManager.cpp
-    └── NV3047_ManagedBuffer.h
+├── src/
+│   ├── NV3047_Memory.h
+│   ├── NV3047_MemoryManager.h
+│   ├── NV3047_MemoryManager.cpp
+│   ├── NV3047_ManagedBuffer.h
+│   ├── NV3047_FramebufferPair.h
+│   ├── NV3047_FramebufferPair.cpp
+│   ├── NV3047_DMAPool.h
+│   ├── NV3047_DMAPool.cpp
+│   ├── NV3047_ObjectPool.h
+│   ├── NV3047_AssetCache.h
+│   ├── NV3047_AssetCache.cpp
+│   ├── NV3047_AutoMemory.h
+│   └── NV3047_AutoMemory.cpp
+├── library.properties
+└── README.md
 ```
 
-## Status
+## Build verification
 
-Initial architecture and implementation. The library is intentionally isolated so the driver and UI overhauls can adopt it without circular dependencies.
+GitHub Actions compiles the library and example against:
+
+- `esp32:esp32@2.0.17`
+- `ESP32-S3 Dev Module`
+
+This keeps the library locked to the same Arduino core generation used by the NV3047 projects.
