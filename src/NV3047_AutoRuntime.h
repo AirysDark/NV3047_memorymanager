@@ -41,8 +41,14 @@ struct AutoRuntimeStats
     size_t minimumFreeStackBytes = 0;
 
     // Permanent compile-time storage used by the background runtime task,
-    // mutex and state. The broker arena is reported separately by AutoMemory.
+    // mutex and state.
     size_t staticRuntimeBytes = 0;
+
+    // MemoryManager + AutoMemory static objects + broker control arena.
+    size_t managerControlBytes = 0;
+
+    // Combined manager control + automatic runtime control footprint.
+    size_t totalPermanentControlBytes = 0;
 };
 
 AutoRuntimeStats automaticRuntimeStats();
