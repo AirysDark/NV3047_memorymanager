@@ -1205,6 +1205,12 @@ void* MemoryBroker::requestInternal(
         return nullptr;
     }
 
+    const MemoryRegion preferredRegion =
+        manager_->preferredRegion(
+            bytes,
+            purpose
+        );
+
     void* pointer =
         manager_->allocate(
             bytes,
@@ -1213,20 +1219,70 @@ void* MemoryBroker::requestInternal(
             tag
         );
 
-    if (!pointer)
+    // If the first allocation fails, reclaim only memory that can actually
+    // satisfy this request. Retry in bounded passes because fragmentation may
+    // require more than one donor to create a sufficiently large block.
+    for (
+        uint8_t pass = 0;
+        !pointer &&
+        pass < MAX_CLIENTS;
+        ++pass
+    )
     {
-        const size_t reclaimTarget =
-            bytes >
-                config_.minimumReclaimBytes
-                ? bytes
-                : config_.
-                    minimumReclaimBytes;
+        size_t reclaimTarget =
+            config_.minimumReclaimBytes;
 
-        reclaimFor(
-            client,
-            reclaimTarget,
-            BrokerReclaimReason::Request
-        );
+        if (
+            preferredRegion !=
+                MemoryRegion::Auto
+        )
+        {
+            const HeapStats heap =
+                manager_->regionStats(
+                    preferredRegion
+                );
+
+            if (
+                heap.largestFreeBlock <
+                bytes
+            )
+            {
+                const size_t deficit =
+                    bytes -
+                    heap.largestFreeBlock;
+
+                if (
+                    deficit >
+                    reclaimTarget
+                )
+                {
+                    reclaimTarget =
+                        deficit;
+                }
+            }
+        }
+
+        if (
+            reclaimTarget <
+            bytes / 4
+        )
+        {
+            reclaimTarget =
+                bytes / 4;
+        }
+
+        const size_t reclaimed =
+            reclaimFor(
+                client,
+                reclaimTarget,
+                BrokerReclaimReason::Request,
+                preferredRegion
+            );
+
+        if (reclaimed == 0)
+        {
+            break;
+        }
 
         pointer =
             manager_->allocate(
@@ -1285,6 +1341,11 @@ void* MemoryBroker::requestInternal(
 
         lease.purpose =
             purpose;
+
+        lease.region =
+            manager_->allocationRegion(
+                pointer
+            );
 
         lease.reclaimable =
             reclaimable;
