@@ -55,6 +55,13 @@ jobs:
             --library . \
             examples/AdaptiveStressTest
 
+      - name: Compile IncludeOnlyTest for ESP32-S3
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --library . \
+            examples/IncludeOnlyTest
+
       - name: Compile DriverTakeoverTest with NV3047 drivers
         run: |
           arduino-cli compile \
@@ -62,3 +69,11 @@ jobs:
             --library . \
             --library external/NV3047_drivers \
             examples/DriverTakeoverTest
+
+      - name: Compile DriverTakeoverMemoryFirstTest with NV3047 drivers
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --library . \
+            --library external/NV3047_drivers \
+            examples/DriverTakeoverMemoryFirstTest
