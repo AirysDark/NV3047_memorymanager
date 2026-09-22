@@ -303,16 +303,16 @@ void* providerAcquireDMA(
 }
 
 void providerReleaseDMA(void* pointer) {
-    if (!pointer) {
+    if (
+        !pointer ||
+        !bridge_active ||
+        !providerReady()
+    ) {
         return;
     }
 
     NV3047Memory::AutoMemory& automatic =
         NV3047Memory::AutoMemory::instance();
-
-    if (!automatic.isReady()) {
-        return;
-    }
 
     NV3047Memory::DMAPool& pool =
         automatic.dmaPool();
