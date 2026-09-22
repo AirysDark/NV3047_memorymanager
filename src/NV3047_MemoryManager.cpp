@@ -223,22 +223,24 @@ size_t MemoryManager::normalizeAlignment(
     }
 
     // heap_caps_aligned_alloc requires a power-of-two alignment.
-    if ((alignment & (alignment - 1)) != 0)
+    if ((alignment & (alignment - 1)) == 0)
     {
-        size_t rounded = 4;
-
-        while (
-            rounded < alignment &&
-            rounded <= (SIZE_MAX >> 1)
-        )
-        {
-            rounded <<= 1;
-        }
-
-        alignment = rounded;
+        return alignment;
     }
 
-    return alignment;
+    size_t rounded = 4;
+
+    while (rounded < alignment)
+    {
+        if (rounded > (SIZE_MAX >> 1))
+        {
+            return 0;
+        }
+
+        rounded <<= 1;
+    }
+
+    return rounded;
 }
 
 MemoryRegion MemoryManager::chooseRegion(
@@ -298,6 +300,11 @@ void* MemoryManager::rawAllocate(
         normalizeAlignment(
             alignment
         );
+
+    if (alignment == 0)
+    {
+        return nullptr;
+    }
 
     uint32_t caps = 0;
     size_t reserve = 0;
@@ -411,13 +418,6 @@ bool MemoryManager::trackAllocation(
 
     lock();
 
-    if (!config_.enableTracking)
-    {
-        ++successful_allocations_;
-        unlock();
-        return true;
-    }
-
     for (
         size_t i = 0;
         i < MAX_TRACKED_ALLOCATIONS;
@@ -438,7 +438,10 @@ bool MemoryManager::trackAllocation(
 
             record.tag[0] = '\0';
 
-            if (tag)
+            if (
+                config_.enableTracking &&
+                tag
+            )
             {
                 strncpy(
                     record.tag,
@@ -508,6 +511,12 @@ void* MemoryManager::allocateTracked(
         normalizeAlignment(
             alignment
         );
+
+    if (alignment == 0)
+    {
+        noteFailure();
+        return nullptr;
+    }
 
     MemoryRegion actualRegion =
         preferredRegion;
@@ -693,16 +702,8 @@ void* MemoryManager::reallocate(
         return nullptr;
     }
 
-    if (
-        !ready_ ||
-        !config_.enableTracking
-    )
+    if (!ready_)
     {
-        if (ready_)
-        {
-            noteFailure();
-        }
-
         return nullptr;
     }
 
@@ -824,12 +825,33 @@ uint16_t* MemoryManager::allocateFramebuffer(
         return nullptr;
     }
 
+    if (
+        config_.requirePSRAMForFramebuffer &&
+        !psram_available_
+    )
+    {
+        noteFailure();
+        return nullptr;
+    }
+
+    const MemoryRegion region =
+        config_.requirePSRAMForFramebuffer
+            ? MemoryRegion::PSRAM
+            : chooseRegion(
+                  pixels * sizeof(uint16_t),
+                  MemoryPurpose::Framebuffer
+              );
+
     return static_cast<uint16_t*>(
-        allocate(
+        allocateTracked(
             pixels * sizeof(uint16_t),
             MemoryPurpose::Framebuffer,
+            region,
             64,
-            tag
+            tag,
+            config_.requirePSRAMForFramebuffer
+                ? false
+                : config_.allowFallback
         )
     );
 }
@@ -888,12 +910,6 @@ void MemoryManager::release(
         !pointer
     )
     {
-        return;
-    }
-
-    if (!config_.enableTracking)
-    {
-        rawFree(pointer);
         return;
     }
 
@@ -1019,10 +1035,7 @@ size_t MemoryManager::releaseTag(
 
 void MemoryManager::releaseAll()
 {
-    if (
-        !ready_ ||
-        !config_.enableTracking
-    )
+    if (!ready_)
     {
         return;
     }
@@ -1064,8 +1077,7 @@ bool MemoryManager::owns(
 {
     if (
         !ready_ ||
-        !pointer ||
-        !config_.enableTracking
+        !pointer
     )
     {
         return false;
@@ -1103,8 +1115,7 @@ size_t MemoryManager::allocationSize(
 {
     if (
         !ready_ ||
-        !pointer ||
-        !config_.enableTracking
+        !pointer
     )
     {
         return 0;
@@ -1604,7 +1615,7 @@ void MemoryManager::dump(
     if (!config_.enableTracking)
     {
         output.println(
-            "Tracking disabled."
+            "Detailed allocation tags disabled."
         );
         return;
     }
