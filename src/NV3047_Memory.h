@@ -10,3 +10,4 @@
 #include "NV3047_AssetCache.h"
 #include "NV3047_AutoMemory.h"
 #include "NV3047_DriverTakeover.h"
+#include "NV3047_AutoRuntime.h"
