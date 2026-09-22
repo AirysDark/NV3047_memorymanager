@@ -259,6 +259,7 @@ private:
     bool ready_;
     bool psram_available_;
 
+    mutable StaticSemaphore_t mutex_storage_;
     mutable SemaphoreHandle_t mutex_;
 
     AllocationRecord records_[MAX_TRACKED_ALLOCATIONS];
