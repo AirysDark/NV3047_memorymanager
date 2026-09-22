@@ -7,10 +7,13 @@ extern "C" {
 #endif
 
 // Implemented by NV3047_drivers when that library is linked.
-// Weak declaration keeps NV3047_memorymanager usable on its own.
+// If the driver header was already included, reuse its declaration.
+// Otherwise use a weak declaration so NV3047_memorymanager remains standalone.
+#ifndef NV3047_DRIVER_MEMORY_PROVIDER_API_DECLARED
 bool nv3047_driver_register_memory_provider(
     const NV3047MemoryProviderV1* provider)
     __attribute__((weak));
+#endif
 
 // Strong symbol implemented by this library. Referencing it from the automatic
 // registrar ensures Arduino's linker pulls the provider bridge into the image
