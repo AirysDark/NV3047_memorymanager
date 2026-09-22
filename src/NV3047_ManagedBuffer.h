@@ -90,18 +90,6 @@ public:
     {
         release();
 
-        if (
-            count != 0 &&
-            count >
-                (
-                    SIZE_MAX /
-                    sizeof(T)
-                )
-        )
-        {
-            return false;
-        }
-
         data_ =
             manager_->allocateArray<T>(
                 count,
