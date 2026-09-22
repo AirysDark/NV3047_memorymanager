@@ -118,6 +118,40 @@ It exercises:
 
 CI now compiles both the normal demo and this stress test against ESP32 Arduino Core 2.0.17.
 
+## 0.4.0 automatic driver takeover
+
+Adding the library to an NV3047 sketch now automatically hands framebuffer and driver-DMA ownership to `NV3047_memorymanager`.
+
+The sketch only needs the normal public include:
+
+```cpp
+#include <NV3047_Memory.h>
+#include <NV3047_Driver.h>
+```
+
+No explicit registration call and no mandatory `AutoMemory::begin()` call are required. `NV3047_Memory.h` installs a small startup registrar before Arduino `setup()`. When `NV3047_drivers:driver_overhaul_v2` starts, its local `Core_Matrices/MemoryManager` detects the registered provider and becomes a thin adapter over this library.
+
+Takeover covers:
+
+- front/back framebuffer ownership through `AutoMemory::framebuffers()`
+- framebuffer role swaps
+- framebuffer diagnostics
+- per-frame `beginFrame()`
+- adaptive `service()`
+- the driver's persistent DMA fill buffer
+
+When the provider is registered, the driver **does not silently fall back** to its internal allocator if external startup fails. This prevents two competing memory owners from being created.
+
+Without `NV3047_Memory.h` in the sketch, `NV3047_drivers` behaves exactly as before and uses its own local framebuffer manager.
+
+Runtime detection is available from the driver:
+
+```cpp
+display.isExternalMemoryManagerActive();
+```
+
+The bridge uses a versioned C-compatible provider ABI so neither repository needs a hard Arduino library dependency on the other. `NV3047_memorymanager` remains usable by itself.
+
 ## 0.3.0 adaptive broker
 
 The memory manager now implements the workload-sharing behavior the project is aiming for.
