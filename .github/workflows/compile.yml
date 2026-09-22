@@ -34,6 +34,13 @@ jobs:
           ref: driver_overhaul_v2
           path: external/NV3047_drivers
 
+      - name: Compile include-only automatic runtime
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --library . \
+            examples/IncludeOnlyAuto
+
       - name: Compile MemoryManagerDemo for ESP32-S3
         run: |
           arduino-cli compile \
