@@ -94,6 +94,8 @@ public:
 
     size_t emergencyPurge();
 
+    bool validate() const;
+
     void dump(
         Stream& output = Serial
     ) const;
