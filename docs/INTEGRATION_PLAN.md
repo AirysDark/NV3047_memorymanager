@@ -56,17 +56,27 @@ Built-in broker clients are:
 
 The UI and application may temporarily exceed their soft budgets when memory is available. Under pressure or a higher-importance request, lower-importance idle/background clients are asked to reclaim memory.
 
+Reclamation is region-aware:
+
+- PSRAM requests reclaim PSRAM-backed donors
+- DMA requests reclaim DMA-capable donors
+- Internal requests may use Internal or DMA-capable internal donors
+- generic Auto requests may use any eligible donor
+
+Large failed allocations also inspect the target region's largest contiguous free block and retry after bounded reclaim passes. This lets the broker respond to fragmentation instead of relying only on total free bytes.
+
 `ElasticBuffer<T>` provides automatically reclaimable working memory with safe invalidation and recreation.
 
 ## Permanent broker memory
 
 On ESP32-S3 / Arduino Core 2.0.17 the current broker metadata layout is compile-time locked to:
 
-- 16 client records × 72 bytes = 1,152 bytes
-- 128 lease records × 24 bytes = 3,072 bytes
-- exact required arena = **4,224 bytes**
+- 16 client records × 76 bytes = 1,216 bytes
+- 128 lease records × 28 bytes = 3,584 bytes
+- exact required arena = **4,800 bytes**
 - requested headroom = **2,048 bytes**
 - rounded permanent control arena = **7,168 bytes**
+- remaining control headroom = **2,368 bytes**
 
 The arena is internal-RAM-only `MemoryPurpose::Control` storage.
 
@@ -218,6 +228,19 @@ When the UI is idle and another active workload needs memory, the broker may rec
 
 Temporary arrays, transformed coordinates, generated scanlines and other frame-local data should use the scratch arena.
 
+Nested operations can checkpoint and rewind within the same frame:
+
+```cpp
+size_t mark =
+    AutoMemory::instance().
+        memory().scratchMark();
+
+// allocate temporary scratch...
+
+AutoMemory::instance().
+    memory().rewindScratch(mark);
+```
+
 ### 6. Optional dynamic UI objects
 
 Use `ObjectPool<T, Capacity>` only where the UI/application actually creates and destroys objects dynamically.
@@ -311,6 +334,21 @@ Every pointer has exactly one owner.
 | general managed allocation | MemoryManager / ManagedBuffer |
 
 Consumers borrow these pointers. Consumers do not directly `free()` them.
+
+## Integration validation
+
+During future `driver_overhaul_v2` / `ui-overhaul-v2` integration, call:
+
+```cpp
+if (!AutoMemory::instance().validate())
+{
+    // Memory ownership/accounting inconsistency.
+}
+```
+
+This checks the base manager, broker lease totals, duplicate broker pointers, asset-cache ownership, framebuffer readiness and DMA pool accounting.
+
+The `AdaptiveStressTest` example should be run on the actual ESP32-S3 hardware before and after takeover changes. It alternates UI/application workload importance and reports PSRAM free bytes, largest contiguous block, elastic residency and validation state.
 
 ## Core compatibility
 
