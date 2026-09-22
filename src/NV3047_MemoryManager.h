@@ -84,6 +84,11 @@ struct MemoryConfig
     bool preferPSRAM = true;
     bool allowFallback = true;
 
+    // Keep optional graphics/scratch work from consuming internal RAM when
+    // PSRAM is present but under pressure or fragmented.
+    bool allowBitmapFallback = false;
+    bool allowScratchFallback = false;
+
     // NV3047 driver_overhaul_v2 requires framebuffer storage in PSRAM.
     // Disable only for hardware that intentionally supports internal-RAM frames.
     bool requirePSRAMForFramebuffer = true;
