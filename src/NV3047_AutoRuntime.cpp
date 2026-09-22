@@ -28,6 +28,7 @@ static portMUX_TYPE install_mux =
 
 static volatile bool installed = false;
 static volatile bool task_running = false;
+static volatile bool minimal_mode_owned = false;
 
 static volatile uint32_t automatic_starts = 0;
 static volatile uint32_t failed_starts = 0;
@@ -64,6 +65,8 @@ bool startMinimalAutomaticMemory()
         ++failed_starts;
         return false;
     }
+
+    minimal_mode_owned = true;
 
     ++automatic_starts;
     return true;
@@ -198,6 +201,18 @@ nv3047_memorymanager_autoruntime_unlock()
     }
 }
 
+extern "C" bool
+nv3047_memorymanager_autoruntime_minimal_owned()
+{
+    return minimal_mode_owned;
+}
+
+extern "C" void
+nv3047_memorymanager_autoruntime_clear_minimal_owned()
+{
+    minimal_mode_owned = false;
+}
+
 namespace NV3047Memory
 {
 
@@ -218,6 +233,9 @@ AutoRuntimeStats automaticRuntimeStats()
     result.driverTakeoverActive =
         nv3047_memorymanager_driver_bridge_active();
 
+    result.minimalModeOwned =
+        minimal_mode_owned;
+
     result.automaticStarts =
         automatic_starts;
 
@@ -234,6 +252,7 @@ AutoRuntimeStats automaticRuntimeStats()
         sizeof(install_mux) +
         sizeof(installed) +
         sizeof(task_running) +
+        sizeof(minimal_mode_owned) +
         sizeof(automatic_starts) +
         sizeof(failed_starts) +
         sizeof(background_service_passes);
