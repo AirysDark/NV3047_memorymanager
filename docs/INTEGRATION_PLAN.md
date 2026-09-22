@@ -360,6 +360,20 @@ This checks the base manager, broker lease totals, duplicate broker pointers, as
 
 The `AdaptiveStressTest` example should be run on the actual ESP32-S3 hardware before and after takeover changes. It alternates UI/application workload importance and reports PSRAM free bytes, largest contiguous block, elastic residency and validation state.
 
+## Automatic runtime safety
+
+The include-only runtime waits for Arduino's `loopTaskHandle` before starting `AutoMemory`. On Arduino ESP32 Core 2.0.17 that handle is assigned after `initArduino()`, and `initArduino()` performs PSRAM initialization.
+
+The automatic service task uses a permanent **4096-byte** static stack. `automaticRuntimeStats()` reports current stack headroom and the combined permanent manager/runtime control footprint.
+
+While the external NV3047 driver takeover is active, background full reclaim is suppressed so unpinned cache data cannot be evicted asynchronously in the middle of rendering. The driver invokes full service at successful swap boundaries. Broker activity is refreshed again inside `reclaimFor()`, so a static display does not leave stale workload importance when another subsystem requests memory.
+
+### Driver re-initialization caveat
+
+The current `driver_overhaul_v2` HAL keeps its optional lazy screen-fill DMA pointer as a `DisplayDriver` member. Normal high-level `NV3047_Driver::fillScreen()` uses framebuffer clear/present and does not use that HAL buffer.
+
+If a future application explicitly uses the low-level HAL fill path and repeatedly tears down/re-initializes the same hardware object, the driver should reset or reacquire that cached HAL DMA pointer as part of re-initialization. This is a driver-side lifecycle hardening item; the memory-manager provider already rejects stale release requests after provider shutdown.
+
 ## Core compatibility
 
 The memory system is developed and CI-compiled against Arduino ESP32 Core 2.0.17, matching both overhaul branches.
