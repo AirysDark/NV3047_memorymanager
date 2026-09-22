@@ -236,6 +236,9 @@ public:
     );
     void resetScratch();
 
+    size_t scratchMark() const;
+    bool rewindScratch(size_t mark);
+
     size_t scratchCapacity() const;
     size_t scratchUsed() const;
 
