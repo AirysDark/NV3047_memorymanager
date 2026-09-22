@@ -26,9 +26,97 @@ These overhaul branches are the source of truth for integration decisions.
 
 ## Current version
 
-**0.3.0**
+**0.4.0**
 
 The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
+
+## 0.4.0 region-aware recovery
+
+The broker now understands **where** memory lives, not just how many bytes are reclaimable.
+
+### Region-aware donor selection
+
+Each broker lease records its actual allocation region. Observed/reclaimable client memory also records its region.
+
+A failed request now targets only donors that can help that request:
+
+- PSRAM request -> PSRAM donors
+- DMA request -> DMA-capable donors
+- Internal request -> Internal or DMA-capable internal donors
+- Auto request -> any eligible donor
+
+This prevents a large PSRAM request from evicting unrelated internal-RAM data that would not improve the allocation result.
+
+### Fragmentation-aware allocation recovery
+
+Allocation retry logic checks the target region's **largest contiguous free block**.
+
+If total free PSRAM is healthy but the largest block is too small, the broker performs bounded region-specific reclaim passes and retries the allocation after each pass.
+
+This directly addresses the case where enough total memory exists but is too fragmented to satisfy a large UI/application allocation.
+
+### Runtime integrity validation
+
+The library now exposes:
+
+```cpp
+memory.validate();
+```
+
+Validation covers:
+
+- base allocation-record accounting
+- active allocation byte/count totals
+- scratch bounds
+- broker client/lease accounting
+- duplicate broker lease pointers
+- broker permanent-arena bounds
+- asset-cache pointer ownership and byte totals
+- framebuffer readiness
+- DMA-pool live block accounting
+
+This is intended for hardware testing and future driver/UI integration.
+
+### Scratch checkpoints
+
+The frame scratch arena now supports same-frame checkpoints:
+
+```cpp
+size_t mark =
+    memory.memory().scratchMark();
+
+void* work =
+    memory.memory().scratch(
+        12 * 1024,
+        16
+    );
+
+// temporary work...
+
+memory.memory().rewindScratch(mark);
+```
+
+This allows nested render/layout operations to return temporary scratch capacity immediately instead of waiting for the next frame.
+
+### Adaptive stress test
+
+A new `AdaptiveStressTest` example continuously alternates:
+
+- UI-heavy phase
+- application-heavy phase
+- both-active phase
+- idle/recovery phase
+
+It exercises:
+
+- UI/application elastic handoff
+- PSRAM-specific reclaim
+- asset-cache donor behavior
+- scratch checkpoint/rewind
+- largest-free-block reporting
+- continuous `validate()` checks
+
+CI now compiles both the normal demo and this stress test against ESP32 Arduino Core 2.0.17.
 
 ## 0.3.0 adaptive broker
 
@@ -40,10 +128,10 @@ The broker does not guess a large fixed reservation. It calculates the exact com
 
 For ESP32-S3 / Arduino Core 2.0.17 with the current layout:
 
-- exact broker table requirement: **4,224 bytes**
+- exact broker table requirement: **4,800 bytes**
 - configured expansion margin: **2,048 bytes**
 - final permanent broker arena after 1 KiB rounding: **7,168 bytes**
-- effective spare control headroom: **2,944 bytes**
+- effective spare control headroom: **2,368 bytes**
 
 That arena is allocated from **internal RAM only** through `MemoryPurpose::Control`. It never falls back to PSRAM and is never offered to application workloads.
 
@@ -74,10 +162,11 @@ Soft budgets are guidance, **not fixed partitions**. A workload can grow beyond 
 
 When another workload needs memory, the broker prefers donors that are:
 
-1. lower priority
-2. less active
-3. above their soft budget
-4. holding more reclaimable memory
+1. in a memory region that can actually satisfy the request
+2. lower priority
+3. less active
+4. above their soft budget
+5. holding more reclaimable memory
 
 ### UI-aware behavior
 
@@ -120,6 +209,10 @@ if (!uiWork.resident())
 - replacement-safe cached assets
 - stale-pointer guards
 - fragmentation diagnostics
+- fragmentation-aware allocation retries
+- region-aware donor selection
+- full integrity validation
+- same-frame scratch rewind
 - automatic Warning/Critical recovery
 
 ## Current NV3047 memory pressure
@@ -563,8 +656,10 @@ NV3047_memorymanager/
 │   ├── INTEGRATION_PLAN.md
 │   └── REFERENCE_BASELINES.md
 ├── examples/
-│   └── MemoryManagerDemo/
-│       └── MemoryManagerDemo.ino
+│   ├── MemoryManagerDemo/
+│   │   └── MemoryManagerDemo.ino
+│   └── AdaptiveStressTest/
+│       └── AdaptiveStressTest.ino
 ├── src/
 │   ├── NV3047_Memory.h
 │   ├── NV3047_MemoryManager.h
@@ -588,7 +683,7 @@ NV3047_memorymanager/
 
 ## Build verification
 
-GitHub Actions compiles the library and example against:
+GitHub Actions compiles both `MemoryManagerDemo` and `AdaptiveStressTest` against:
 
 - `esp32:esp32@2.0.17`
 - `ESP32-S3 Dev Module`
