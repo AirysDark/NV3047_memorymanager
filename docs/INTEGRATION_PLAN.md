@@ -41,6 +41,35 @@ Therefore the framework's screen registration path no longer needs an object-poo
 
 The UI also already exposes driver framebuffer/memory diagnostics through `UIDriverStats`.
 
+## Adaptive broker contract
+
+The external manager now contains a workload-aware `MemoryBroker`.
+
+The takeover should expose activity and reclaimability, not fixed memory partitions.
+
+Built-in broker clients are:
+
+- driver-fixed — Critical, permanent framebuffer/DMA ownership
+- ui — Normal priority with activity decay
+- assets — Normal priority and linked to UI activity
+- application — Normal priority for non-UI work
+
+The UI and application may temporarily exceed their soft budgets when memory is available. Under pressure or a higher-importance request, lower-importance idle/background clients are asked to reclaim memory.
+
+`ElasticBuffer<T>` provides automatically reclaimable working memory with safe invalidation and recreation.
+
+## Permanent broker memory
+
+On ESP32-S3 / Arduino Core 2.0.17 the current broker metadata layout is compile-time locked to:
+
+- 16 client records × 72 bytes = 1,152 bytes
+- 128 lease records × 24 bytes = 3,072 bytes
+- exact required arena = **4,224 bytes**
+- requested headroom = **2,048 bytes**
+- rounded permanent control arena = **7,168 bytes**
+
+The arena is internal-RAM-only `MemoryPurpose::Control` storage.
+
 ## Rule
 
 The driver and UI may request memory.
@@ -156,7 +185,20 @@ Do not replace this table just for the sake of routing everything through the me
 
 Deterministic member storage is already the correct embedded design here.
 
-### 2. Assets
+### 2. UI activity
+
+The UI should notify the manager when it is genuinely being used:
+
+```cpp
+AutoMemory::instance().
+    noteUIActivity();
+```
+
+Good trigger points include successful touch/input activity and active UI working-set access.
+
+The broker automatically decays inactive UI clients through Background to Idle.
+
+### 3. Assets
 
 Icons, RGB565 bitmaps and decoded graphical data should enter `AssetCache`.
 
@@ -164,11 +206,21 @@ Frequently required UI assets may be pinned.
 
 Optional page-specific assets should remain unpinned so automatic pressure recovery can evict them.
 
-### 3. Layout/render scratch
+Asset-client activity follows UI activity. Active UI assets therefore are not treated as low-value donor memory merely because they are cache entries.
+
+### 4. Elastic UI work memory
+
+Large disposable page/layout/decoded working sets should use `ElasticBuffer<T>` or `MemoryBroker::requestElastic()`.
+
+When the UI is idle and another active workload needs memory, the broker may reclaim these allocations. Their handles are invalidated safely and can be recreated with `ensure()`.
+
+### 5. Layout/render scratch
 
 Temporary arrays, transformed coordinates, generated scanlines and other frame-local data should use the scratch arena.
 
-### 4. Optional dynamic UI objects
+### 6. Optional dynamic UI objects
+
+
 
 Use `ObjectPool<T, Capacity>` only where the UI/application actually creates and destroys objects dynamically.
 
@@ -179,7 +231,7 @@ Good candidates include:
 - transient model/view objects
 - future dynamically composed widgets
 
-### 5. Diagnostics
+### 7. Diagnostics
 
 The overhaul UI already expects driver diagnostics including:
 
@@ -218,6 +270,8 @@ void loop()
 ```
 
 The driver remains responsible for presentation cadence and physical display submission. The memory manager owns the storage.
+
+Application subsystems that can discard/rebuild working data should register a broker reclaimer or use elastic leases. This is what allows memory to move back from an idle non-UI workload to an active UI workload as well as in the opposite direction.
 
 The adapter must not silently fall back to internal RAM for framebuffer storage. If the required PSRAM framebuffer allocation cannot be satisfied, initialization should fail cleanly rather than starving the ESP32 runtime.
 
