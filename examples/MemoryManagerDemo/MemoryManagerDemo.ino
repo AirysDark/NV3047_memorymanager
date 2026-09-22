@@ -26,6 +26,12 @@ ObjectPool<DemoRuntimeObject, 8>
 ManagedBuffer<uint8_t>
     managedBytes;
 
+ElasticBuffer<uint8_t>
+    uiElastic;
+
+ElasticBuffer<uint8_t>
+    applicationElastic;
+
 static const uint16_t DEMO_ICON[16] =
 {
     0xF800, 0xF800, 0x001F, 0x001F,
@@ -163,45 +169,51 @@ void setup()
 
         automaticMemory.noteUIActivity();
 
-        void* uiWorkingSet =
-            broker.request(
-                automaticMemory.uiClient(),
-                96 * 1024,
-                MemoryPurpose::General,
-                8,
-                "demo-ui-work"
-            );
+        uiElastic.begin(
+            &broker,
+            automaticMemory.uiClient(),
+            96 * 1024,
+            MemoryPurpose::General,
+            "demo-ui-elastic"
+        );
 
-        // The application is also elastic. If the UI later becomes idle,
-        // application activity can outrank it and borrow available memory.
+        applicationElastic.begin(
+            &broker,
+            automaticMemory.applicationClient(),
+            128 * 1024,
+            MemoryPurpose::General,
+            "demo-app-elastic"
+        );
+
+        // Simulate the UI going idle while application work becomes active.
+        // The broker is now allowed to reclaim the UI elastic working set.
+        broker.setActivity(
+            automaticMemory.uiClient(),
+            BrokerActivity::Idle
+        );
+
         automaticMemory.noteApplicationActivity();
 
-        void* appWorkingSet =
-            broker.request(
-                automaticMemory.
-                    applicationClient(),
-                128 * 1024,
-                MemoryPurpose::General,
-                8,
-                "demo-app-work"
-            );
+        broker.reclaimFor(
+            automaticMemory.applicationClient(),
+            64 * 1024,
+            BrokerReclaimReason::Request
+        );
 
-        if (uiWorkingSet)
-        {
-            broker.release(
-                automaticMemory.uiClient(),
-                uiWorkingSet
-            );
-        }
+        Serial.print(
+            "UI elastic resident after app handoff: "
+        );
 
-        if (appWorkingSet)
-        {
-            broker.release(
-                automaticMemory.
-                    applicationClient(),
-                appWorkingSet
-            );
-        }
+        Serial.println(
+            uiElastic.resident()
+                ? "yes"
+                : "no"
+        );
+
+        // UI becomes active again. ensure() recreates its working set if the
+        // broker reclaimed it while the application was more important.
+        automaticMemory.noteUIActivity();
+        uiElastic.ensure();
     }
 
     if (
