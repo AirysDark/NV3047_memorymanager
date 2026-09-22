@@ -486,8 +486,35 @@ size_t MemoryBroker::totalBytes(
         client.observedBytes;
 }
 
+bool MemoryBroker::regionCanSatisfy(
+    MemoryRegion donor,
+    MemoryRegion target
+)
+{
+    if (
+        target == MemoryRegion::Auto ||
+        donor == target
+    )
+    {
+        return true;
+    }
+
+    // DMA-capable internal memory can also satisfy ordinary internal-RAM
+    // demand. The reverse is not guaranteed.
+    if (
+        target == MemoryRegion::Internal &&
+        donor == MemoryRegion::DMA
+    )
+    {
+        return true;
+    }
+
+    return false;
+}
+
 size_t MemoryBroker::elasticReclaimable(
-    BrokerClientId client
+    BrokerClientId client,
+    MemoryRegion targetRegion
 ) const
 {
     if (
@@ -513,7 +540,11 @@ size_t MemoryBroker::elasticReclaimable(
         if (
             !lease.used ||
             !lease.reclaimable ||
-            lease.client != client
+            lease.client != client ||
+            !regionCanSatisfy(
+                lease.region,
+                targetRegion
+            )
         )
         {
             continue;
@@ -535,7 +566,8 @@ size_t MemoryBroker::elasticReclaimable(
 }
 
 size_t MemoryBroker::availableReclaim(
-    const ClientRecord& client
+    const ClientRecord& client,
+    MemoryRegion targetRegion
 ) const
 {
     const size_t total =
@@ -548,14 +580,24 @@ size_t MemoryBroker::availableReclaim(
         return 0;
     }
 
-    size_t external =
-        client.reclaim
-            ? client.reclaimableBytes
-            : 0;
+    size_t external = 0;
+
+    if (
+        client.reclaim &&
+        regionCanSatisfy(
+            client.observedRegion,
+            targetRegion
+        )
+    )
+    {
+        external =
+            client.reclaimableBytes;
+    }
 
     const size_t elastic =
         elasticReclaimable(
-            client.id
+            client.id,
+            targetRegion
         );
 
     size_t reclaimable =
@@ -862,7 +904,8 @@ bool MemoryBroker::noteActivity(
 bool MemoryBroker::setObservedUsage(
     BrokerClientId client,
     size_t bytes,
-    size_t reclaimableBytes
+    size_t reclaimableBytes,
+    MemoryRegion region
 )
 {
     if (!isReady())
@@ -886,6 +929,9 @@ bool MemoryBroker::setObservedUsage(
             reclaimableBytes <= bytes
                 ? reclaimableBytes
                 : bytes;
+
+        record->observedRegion =
+            region;
 
         accountPeak(
             *record
