@@ -271,6 +271,7 @@ MemoryRegion MemoryManager::chooseRegion(
             return MemoryRegion::Internal;
 
         case MemoryPurpose::UIObject:
+        case MemoryPurpose::Control:
             return MemoryRegion::Internal;
 
         case MemoryPurpose::General:
@@ -944,6 +945,22 @@ void* MemoryManager::allocateDMA(
     );
 }
 
+void* MemoryManager::allocateControl(
+    size_t bytes,
+    size_t alignment,
+    const char* tag
+)
+{
+    return allocateTracked(
+        bytes,
+        MemoryPurpose::Control,
+        MemoryRegion::Internal,
+        alignment,
+        tag,
+        false
+    );
+}
+
 void MemoryManager::release(
     void* pointer
 )
@@ -1547,6 +1564,9 @@ const char* MemoryManager::purposeName(
 
         case MemoryPurpose::DMA:
             return "DMA";
+
+        case MemoryPurpose::Control:
+            return "CONTROL";
 
         case MemoryPurpose::General:
         default:
