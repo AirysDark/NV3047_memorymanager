@@ -1,6 +1,6 @@
 # NV3047 Memory Takeover Plan
 
-This document defines the future handoff from the active NV3047 overhaul branches into `NV3047_memorymanager`.
+This document defines the handoff from the active NV3047 overhaul branches into `NV3047_memorymanager`. The driver-side framebuffer/DMA takeover described below is now implemented through the optional provider ABI.
 
 ## Reference branches
 
@@ -95,13 +95,13 @@ They should not independently decide:
 
 Those decisions belong in `NV3047_memorymanager`.
 
-## Driver takeover order
+## Driver takeover order — implemented
 
 ### 1. Startup
 
-Start `AutoMemory` before the driver's framebuffer subsystem performs any large allocations.
+`NV3047_Memory.h` now auto-registers the provider before Arduino `setup()`. When the driver initializes its framebuffer subsystem, the bridge starts `AutoMemory` automatically if the application has not already started it.
 
-### 2. Replace local driver MemoryManager
+### 2. Replace local driver MemoryManager — implemented
 
 The driver overhaul currently owns its own class:
 
@@ -112,7 +112,7 @@ Core_Matrices/MemoryManager
     -> swaps buffer indexes
 ```
 
-The future integration should preserve that external behavior while moving actual allocation ownership to:
+The adapter preserves that external behavior while moving actual allocation ownership to:
 
 - `NV3047Memory::AutoMemory`
 - `NV3047Memory::FramebufferPair`
