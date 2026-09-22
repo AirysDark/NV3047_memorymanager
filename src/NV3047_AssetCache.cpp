@@ -945,4 +945,69 @@ AssetCache::Stats AssetCache::stats() const
     return result;
 }
 
+
+bool AssetCache::validate() const
+{
+    if (
+        !manager_ ||
+        !manager_->isReady()
+    )
+    {
+        return false;
+    }
+
+    size_t bytes = 0;
+    uint8_t count = 0;
+
+    for (
+        uint8_t i = 0;
+        i < MAX_ENTRIES;
+        ++i
+    )
+    {
+        const Entry& entry =
+            entries_[i];
+
+        if (!entry.used)
+        {
+            continue;
+        }
+
+        if (
+            !entry.pointer ||
+            entry.bytes == 0 ||
+            !manager_->owns(
+                entry.pointer
+            ) ||
+            manager_->allocationSize(
+                entry.pointer
+            ) <
+                entry.bytes
+        )
+        {
+            return false;
+        }
+
+        if (
+            entry.bytes >
+            SIZE_MAX - bytes
+        )
+        {
+            return false;
+        }
+
+        bytes += entry.bytes;
+        ++count;
+    }
+
+    return
+        bytes == used_bytes_ &&
+        count <= MAX_ENTRIES &&
+        (
+            budget_bytes_ == 0 ||
+            used_bytes_ <=
+                budget_bytes_
+        );
+}
+
 } // namespace NV3047Memory
