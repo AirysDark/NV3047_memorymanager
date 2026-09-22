@@ -103,7 +103,11 @@ bool MemoryManager::begin(
                 )
             );
 
-        if (!scratch_base_ && config_.allowFallback)
+        if (
+            !scratch_base_ &&
+            config_.allowFallback &&
+            config_.allowScratchFallback
+        )
         {
             MemoryRegion fallback =
                 (
@@ -602,6 +606,28 @@ void* MemoryManager::allocate(
     const char* tag
 )
 {
+    bool allowFallback =
+        config_.allowFallback;
+
+    if (
+        purpose ==
+        MemoryPurpose::Bitmap
+    )
+    {
+        allowFallback =
+            allowFallback &&
+            config_.allowBitmapFallback;
+    }
+    else if (
+        purpose ==
+        MemoryPurpose::Scratch
+    )
+    {
+        allowFallback =
+            allowFallback &&
+            config_.allowScratchFallback;
+    }
+
     return allocateTracked(
         bytes,
         purpose,
@@ -611,7 +637,7 @@ void* MemoryManager::allocate(
         ),
         alignment,
         tag,
-        config_.allowFallback
+        allowFallback
     );
 }
 
@@ -968,7 +994,7 @@ void MemoryManager::release(
 
     unlock();
 
-    // Never free an untracked pointer when tracking is enabled.
+    // Never free a pointer that is not owned by this manager.
     if (found)
     {
         rawFree(pointer);
