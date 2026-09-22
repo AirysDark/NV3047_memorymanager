@@ -930,6 +930,14 @@ AssetCache::Stats AssetCache::stats() const
             if (entries_[i].pinned)
             {
                 ++result.pinnedCount;
+
+                result.pinnedBytes +=
+                    entries_[i].bytes;
+            }
+            else
+            {
+                result.reclaimableBytes +=
+                    entries_[i].bytes;
             }
         }
     }
