@@ -17,6 +17,8 @@ public:
         size_t usedBytes = 0;
         size_t peakBytes = 0;
         size_t budgetBytes = 0;
+        size_t pinnedBytes = 0;
+        size_t reclaimableBytes = 0;
 
         uint8_t entryCount = 0;
         uint8_t pinnedCount = 0;
