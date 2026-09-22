@@ -102,7 +102,8 @@ public:
     {
         if (
             storage_ &&
-            manager_
+            manager_ &&
+            storageAlive()
         )
         {
             clear();
@@ -131,7 +132,7 @@ public:
         Args&&... args
     )
     {
-        if (!storage_)
+        if (!storageAlive())
         {
             return nullptr;
         }
@@ -169,7 +170,7 @@ public:
     )
     {
         if (
-            !storage_ ||
+            !storageAlive() ||
             !object
         )
         {
@@ -209,7 +210,7 @@ public:
 
     void clear()
     {
-        if (!storage_)
+        if (!storageAlive())
         {
             return;
         }
@@ -240,7 +241,7 @@ public:
     ) const
     {
         if (
-            !storage_ ||
+            !storageAlive() ||
             !object
         )
         {
@@ -285,6 +286,15 @@ public:
     }
 
 private:
+    bool storageAlive() const
+    {
+        return
+            storage_ != nullptr &&
+            manager_ != nullptr &&
+            manager_->isReady() &&
+            manager_->owns(storage_);
+    }
+
     struct Slot
     {
         alignas(T)
