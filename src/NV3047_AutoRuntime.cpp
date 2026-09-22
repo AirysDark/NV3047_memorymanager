@@ -121,11 +121,15 @@ void runtimeTask(void*)
         {
             startMinimalAutomaticMemory();
         }
-        else
+        else if (
+            !nv3047_memorymanager_driver_bridge_active()
+        )
         {
-            // Service is intentionally independent of display swaps. A static
-            // screen or sleeping display must not stop pressure monitoring,
-            // activity decay, cache trimming or broker maintenance.
+            // Never perform reclaim/eviction asynchronously while the active
+            // display stack may be rendering from borrowed cache pointers.
+            // The driver performs full service after successful swaps. Static
+            // displays still get correct donor aging because reclaimFor()
+            // refreshes client activity on demand.
             automatic.service();
             ++background_service_passes;
         }
