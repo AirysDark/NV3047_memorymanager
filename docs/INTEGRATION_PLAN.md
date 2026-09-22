@@ -220,8 +220,6 @@ Temporary arrays, transformed coordinates, generated scanlines and other frame-l
 
 ### 6. Optional dynamic UI objects
 
-
-
 Use `ObjectPool<T, Capacity>` only where the UI/application actually creates and destroys objects dynamically.
 
 Good candidates include:
@@ -308,6 +306,7 @@ Every pointer has exactly one owner.
 | DMA pool block | DMAPool |
 | cached icon | AssetCache |
 | scratch pointer | MemoryManager scratch arena |
+| elastic working buffer | MemoryBroker / ElasticBuffer |
 | optional pooled object | ObjectPool |
 | general managed allocation | MemoryManager / ManagedBuffer |
 
