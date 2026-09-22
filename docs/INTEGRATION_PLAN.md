@@ -109,6 +109,9 @@ The first external integration target should preserve the current production def
 - frame size: 480 x 272 x 2 bytes
 - alignment: 64 bytes
 - preferred region: PSRAM
+- framebuffer PSRAM requirement: enabled
+- bitmap fallback to internal RAM: disabled by default
+- scratch fallback to internal RAM: disabled by default
 - zero on startup: enabled
 
 ### 5. Persistent DMA screen-fill memory
@@ -215,6 +218,8 @@ void loop()
 ```
 
 The driver remains responsible for presentation cadence and physical display submission. The memory manager owns the storage.
+
+The adapter must not silently fall back to internal RAM for framebuffer storage. If the required PSRAM framebuffer allocation cannot be satisfied, initialization should fail cleanly rather than starving the ESP32 runtime.
 
 ## Pressure rules
 
