@@ -14,12 +14,16 @@ struct AutoMemoryConfig
 
     bool allocateFramebufferPair = true;
 
+    // Matches driver_overhaul_v2 production defaults.
     uint16_t framebufferWidth = 480;
     uint16_t framebufferHeight = 272;
 
     bool enableDMAPool = true;
+
+    // driver_overhaul_v2 uses one persistent 10-line RGB565
+    // DMA-capable fill buffer: 480 * 10 * 2 = 9600 bytes.
     size_t dmaBlockBytes = 480 * 10 * sizeof(uint16_t);
-    uint8_t dmaBlockCount = 2;
+    uint8_t dmaBlockCount = 1;
     size_t dmaAlignment = 4;
 
     // 0 means no hard cache byte budget.
