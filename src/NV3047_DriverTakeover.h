@@ -21,6 +21,8 @@ bool nv3047_driver_register_memory_provider(
 const NV3047MemoryProviderV1*
 nv3047_memorymanager_provider_v1();
 
+bool nv3047_memorymanager_driver_bridge_active();
+
 #ifdef __cplusplus
 }
 #endif
