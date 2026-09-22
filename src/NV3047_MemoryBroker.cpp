@@ -1072,7 +1072,8 @@ int MemoryBroker::findOldestElasticLease(
         if (
             !lease.used ||
             !lease.reclaimable ||
-            lease.client != client
+            lease.client != client ||
+            lease.bytes > maximumBytes
         )
         {
             continue;
@@ -1240,31 +1241,22 @@ void* MemoryBroker::requestInternal(
 
         lease.used = true;
 
-        if (
+        const bool accountingOK =
             bytes <=
             SIZE_MAX -
-                record->managedBytes
-        )
+                record->managedBytes;
+
+        if (accountingOK)
         {
             record->managedBytes +=
                 bytes;
-        }
-        else
-        {
-            recorded = false;
-        }
 
-        record->activity =
-            BrokerActivity::Active;
+            record->activity =
+                BrokerActivity::Active;
 
-        record->lastActivityMs =
-            now;
+            record->lastActivityMs =
+                now;
 
-        if (
-            record->managedBytes >=
-                bytes
-        )
-        {
             accountPeak(
                 *record
             );
