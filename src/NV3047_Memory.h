@@ -2,6 +2,7 @@
 
 #include "NV3047_MemoryManager.h"
 #include "NV3047_MemoryBroker.h"
+#include "NV3047_ElasticBuffer.h"
 #include "NV3047_ManagedBuffer.h"
 #include "NV3047_FramebufferPair.h"
 #include "NV3047_DMAPool.h"
