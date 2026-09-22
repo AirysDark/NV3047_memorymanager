@@ -388,7 +388,8 @@ private:
     ) const;
 
     int findOldestElasticLease(
-        BrokerClientId client
+        BrokerClientId client,
+        size_t maximumBytes
     ) const;
 
     size_t reclaimElastic(
