@@ -83,6 +83,13 @@ struct MemoryConfig
 
     bool preferPSRAM = true;
     bool allowFallback = true;
+
+    // NV3047 driver_overhaul_v2 requires framebuffer storage in PSRAM.
+    // Disable only for hardware that intentionally supports internal-RAM frames.
+    bool requirePSRAMForFramebuffer = true;
+
+    // Ownership bookkeeping is always enabled for safe release/end behavior.
+    // This flag controls tag/listing diagnostics, not pointer ownership.
     bool enableTracking = true;
 
     // service() monitoring cadence.
