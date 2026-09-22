@@ -7,7 +7,7 @@ This repository is the dedicated memory subsystem for:
 - `NV3047_drivers`
 - `NV3047_UI`
 
-The driver and UI repositories are currently read-only references. All development and changes for memory management live in this repository.
+The memory policy and broker live in this repository. The active driver branch now contains the small optional provider adapter required for automatic takeover; the UI remains a reference consumer.
 
 ### Active reference branches
 
@@ -605,7 +605,7 @@ RuntimeObject* object =
 objects.destroy(object);
 ```
 
-## Future driver takeover
+## Driver takeover
 
 `driver_overhaul_v2` already centralises its two framebuffers behind `Core_Matrices/MemoryManager`. The clean takeover is to keep the driver's public framebuffer behavior while replacing that local allocator with a thin adapter over this repository:
 
@@ -629,7 +629,7 @@ driver framebuffer diagnostics
     -> external MemoryManager statistics
 ```
 
-After takeover there should be only one framebuffer owner. The driver remains responsible for presentation timing and panel submission; this library owns the storage policy.
+When this library is included in the sketch, there is one framebuffer owner: this library. The driver remains responsible for presentation timing and panel submission while this library owns storage policy and managed DMA memory.
 
 ## Future UI takeover
 
