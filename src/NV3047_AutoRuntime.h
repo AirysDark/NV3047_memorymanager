@@ -56,13 +56,9 @@ public:
     }
 };
 
-// Header-local by design. install() is idempotent, and the strong symbol
-// reference guarantees that simply including NV3047_Memory.h activates the
-// runtime even when no other library API is referenced by the sketch.
-#ifndef NV3047_MEMORY_DISABLE_AUTORUNTIME
-static AutoRuntimeHeaderInstall
-    auto_runtime_header_install;
-#endif
+// NV3047_Memory.h owns the one include-triggered installer. Keeping the
+// instance out of this internal header prevents library translation units from
+// accidentally defeating NV3047_MEMORY_DISABLE_AUTORUNTIME in advanced tests.
 
 } // namespace Detail
 } // namespace NV3047Memory
