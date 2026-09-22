@@ -97,13 +97,11 @@ void runtimeTask(void*)
         {
             startMinimalAutomaticMemory();
         }
-        else if (
-            !nv3047_memorymanager_driver_bridge_active()
-        )
+        else
         {
-            // When the driver owns frame cadence it already calls beginFrame()
-            // and service() on each successful swap. Background servicing is
-            // only required when no active driver takeover exists.
+            // Service is intentionally independent of display swaps. A static
+            // screen or sleeping display must not stop pressure monitoring,
+            // activity decay, cache trimming or broker maintenance.
             automatic.service();
             ++background_service_passes;
         }
@@ -249,6 +247,8 @@ AutoRuntimeStats automaticRuntimeStats()
         sizeof(runtime_task_stack) +
         sizeof(runtime_task_tcb) +
         sizeof(runtime_mutex_storage) +
+        sizeof(runtime_mutex) +
+        sizeof(runtime_task) +
         sizeof(install_mux) +
         sizeof(installed) +
         sizeof(task_running) +
