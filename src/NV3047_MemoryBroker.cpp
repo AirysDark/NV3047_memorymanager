@@ -513,7 +513,8 @@ size_t MemoryBroker::elasticReclaimable(
         if (
             !lease.used ||
             !lease.reclaimable ||
-            lease.client != client
+            lease.client != client ||
+            lease.bytes > maximumBytes
         )
         {
             continue;
@@ -1052,7 +1053,8 @@ int MemoryBroker::findLease(
 }
 
 int MemoryBroker::findOldestElasticLease(
-    BrokerClientId client
+    BrokerClientId client,
+    size_t maximumBytes
 ) const
 {
     int candidate = -1;
@@ -1238,8 +1240,19 @@ void* MemoryBroker::requestInternal(
 
         lease.used = true;
 
-        record->managedBytes +=
-            bytes;
+        if (
+            bytes <=
+            SIZE_MAX -
+                record->managedBytes
+        )
+        {
+            record->managedBytes +=
+                bytes;
+        }
+        else
+        {
+            recorded = false;
+        }
 
         record->activity =
             BrokerActivity::Active;
@@ -1247,11 +1260,25 @@ void* MemoryBroker::requestInternal(
         record->lastActivityMs =
             now;
 
-        accountPeak(
-            *record
-        );
+        if (
+            record->managedBytes >=
+                bytes
+        )
+        {
+            accountPeak(
+                *record
+            );
 
-        recorded = true;
+            recorded = true;
+        }
+        else
+        {
+            memset(
+                &lease,
+                0,
+                sizeof(LeaseRecord)
+            );
+        }
     }
 
     portEXIT_CRITICAL(
@@ -1587,10 +1614,34 @@ size_t MemoryBroker::reclaimElastic(
             &mux_
         );
 
+        ClientRecord* owner =
+            clientRecord(client);
+
+        size_t maximumBytes = 0;
+
+        if (owner)
+        {
+            const size_t current =
+                totalBytes(*owner);
+
+            if (
+                current >
+                owner->minimumBytes
+            )
+            {
+                maximumBytes =
+                    current -
+                    owner->minimumBytes;
+            }
+        }
+
         const int index =
-            findOldestElasticLease(
-                client
-            );
+            maximumBytes == 0
+                ? -1
+                : findOldestElasticLease(
+                      client,
+                      maximumBytes
+                  );
 
         if (index >= 0)
         {
@@ -1999,9 +2050,9 @@ size_t MemoryBroker::reclaimFor(
 
             const size_t credited =
                 reported <=
-                        externalAvailable
+                        externalAsk
                     ? reported
-                    : externalAvailable;
+                    : externalAsk;
 
             if (credited != 0)
             {
