@@ -108,8 +108,12 @@ void FramebufferPair::end()
 bool FramebufferPair::isReady() const
 {
     return
+        manager_ != nullptr &&
+        manager_->isReady() &&
         buffer_a_ != nullptr &&
-        buffer_b_ != nullptr;
+        buffer_b_ != nullptr &&
+        manager_->owns(buffer_a_) &&
+        manager_->owns(buffer_b_);
 }
 
 uint16_t FramebufferPair::width() const
@@ -144,6 +148,11 @@ size_t FramebufferPair::totalBytes() const
 
 uint16_t* FramebufferPair::front()
 {
+    if (!isReady())
+    {
+        return nullptr;
+    }
+
     return
         a_is_front_
             ? buffer_a_
@@ -152,6 +161,11 @@ uint16_t* FramebufferPair::front()
 
 const uint16_t* FramebufferPair::front() const
 {
+    if (!isReady())
+    {
+        return nullptr;
+    }
+
     return
         a_is_front_
             ? buffer_a_
@@ -160,6 +174,11 @@ const uint16_t* FramebufferPair::front() const
 
 uint16_t* FramebufferPair::back()
 {
+    if (!isReady())
+    {
+        return nullptr;
+    }
+
     return
         a_is_front_
             ? buffer_b_
@@ -168,6 +187,11 @@ uint16_t* FramebufferPair::back()
 
 const uint16_t* FramebufferPair::back() const
 {
+    if (!isReady())
+    {
+        return nullptr;
+    }
+
     return
         a_is_front_
             ? buffer_b_
