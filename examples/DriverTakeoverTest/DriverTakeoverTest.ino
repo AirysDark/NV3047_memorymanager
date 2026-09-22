@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <NV3047_Memory.h>
 #include <NV3047_Driver.h>
+#include <NV3047_Memory.h>
 
 NV3047 hardware;
 NV3047_Driver display;
