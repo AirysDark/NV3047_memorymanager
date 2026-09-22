@@ -23,6 +23,9 @@ struct DemoRuntimeObject
 ObjectPool<DemoRuntimeObject, 8>
     runtimeObjectPool;
 
+ManagedBuffer<uint8_t>
+    managedBytes;
+
 static const uint16_t DEMO_ICON[16] =
 {
     0xF800, 0xF800, 0x001F, 0x001F,
@@ -46,6 +49,17 @@ void setup()
 
     config.memory.scratchBytes =
         64 * 1024;
+
+    // Hardened NV3047 defaults: keep framebuffers in PSRAM and do
+    // not let bitmap/scratch pressure spill into internal RAM.
+    config.memory.requirePSRAMForFramebuffer =
+        true;
+
+    config.memory.allowBitmapFallback =
+        false;
+
+    config.memory.allowScratchFallback =
+        false;
 
     // Matches driver_overhaul_v2:
     // 2 x 480x272 RGB565, 64-byte aligned in PSRAM.
@@ -78,6 +92,19 @@ void setup()
 
     MemoryManager& memory =
         automaticMemory.memory();
+
+    if (
+        managedBytes.allocate(
+            256,
+            MemoryPurpose::General,
+            "demo-managed-buffer"
+        )
+    )
+    {
+        Serial.println(
+            "ManagedBuffer ready"
+        );
+    }
 
     if (
         runtimeObjectPool.begin(
