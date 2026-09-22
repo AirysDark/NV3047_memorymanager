@@ -42,6 +42,12 @@ using BrokerReclaimCallback =
         BrokerReclaimReason reason
     );
 
+using BrokerLeaseReclaimedCallback =
+    void (*)(
+        void* userData,
+        void* pointer
+    );
+
 struct BrokerClientConfig
 {
     const char* name = nullptr;
@@ -193,6 +199,19 @@ public:
         size_t reclaimableBytes
     );
 
+    bool setReclaimer(
+        BrokerClientId client,
+        BrokerReclaimCallback reclaim,
+        void* userData = nullptr
+    );
+
+    bool setLimits(
+        BrokerClientId client,
+        size_t minimumBytes,
+        size_t softLimitBytes,
+        size_t hardLimitBytes = 0
+    );
+
     void* request(
         BrokerClientId client,
         size_t bytes,
@@ -200,6 +219,25 @@ public:
             MemoryPurpose::General,
         size_t alignment = 4,
         const char* tag = nullptr
+    );
+
+    // Elastic allocations are explicitly disposable. The broker may reclaim
+    // them when their client becomes less important than another workload.
+    // onReclaimed must invalidate any caller-side pointer/handle.
+    void* requestElastic(
+        BrokerClientId client,
+        size_t bytes,
+        MemoryPurpose purpose =
+            MemoryPurpose::General,
+        size_t alignment = 4,
+        const char* tag = nullptr,
+        BrokerLeaseReclaimedCallback onReclaimed = nullptr,
+        void* userData = nullptr
+    );
+
+    bool touch(
+        BrokerClientId client,
+        const void* pointer
     );
 
     bool release(
@@ -267,8 +305,14 @@ private:
         void* pointer;
         size_t bytes;
 
+        BrokerLeaseReclaimedCallback onReclaimed;
+        void* userData;
+
+        uint32_t lastUseMs;
+
         BrokerClientId client;
         MemoryPurpose purpose;
+        bool reclaimable;
         bool used;
     };
 
@@ -338,6 +382,30 @@ private:
         uint16_t attemptedMask,
         BrokerReclaimReason reason
     ) const;
+
+    size_t elasticReclaimable(
+        BrokerClientId client
+    ) const;
+
+    int findOldestElasticLease(
+        BrokerClientId client
+    ) const;
+
+    size_t reclaimElastic(
+        BrokerClientId client,
+        size_t targetBytes
+    );
+
+    void* requestInternal(
+        BrokerClientId client,
+        size_t bytes,
+        MemoryPurpose purpose,
+        size_t alignment,
+        const char* tag,
+        bool reclaimable,
+        BrokerLeaseReclaimedCallback onReclaimed,
+        void* userData
+    );
 
     void refreshActivities(
         uint32_t now
