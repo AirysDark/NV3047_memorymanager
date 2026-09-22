@@ -1024,11 +1024,24 @@ size_t MemoryManager::releaseTag(
 {
     if (
         !ready_ ||
-        !tag
+        !tag ||
+        tag[0] == '\0'
     )
     {
         return 0;
     }
+
+    char normalizedTag[TAG_LENGTH] = {};
+
+    strncpy(
+        normalizedTag,
+        tag,
+        TAG_LENGTH - 1
+    );
+
+    normalizedTag[
+        TAG_LENGTH - 1
+    ] = '\0';
 
     size_t released = 0;
 
@@ -1051,7 +1064,7 @@ size_t MemoryManager::releaseTag(
                 record.used &&
                 strcmp(
                     record.tag,
-                    tag
+                    normalizedTag
                 ) == 0
             )
             {
