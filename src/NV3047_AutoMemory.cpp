@@ -13,6 +13,18 @@ AutoMemory::AutoMemory()
     : manager_(
           &MemoryManager::instance()
       ),
+      driver_client_(
+          INVALID_BROKER_CLIENT
+      ),
+      ui_client_(
+          INVALID_BROKER_CLIENT
+      ),
+      asset_client_(
+          INVALID_BROKER_CLIENT
+      ),
+      application_client_(
+          INVALID_BROKER_CLIENT
+      ),
       ready_(false),
       framebuffer_ready_(false),
       dma_ready_(false),
@@ -43,6 +55,20 @@ bool AutoMemory::begin(
         return false;
     }
 
+    if (config_.enableBroker)
+    {
+        if (
+            !broker_.begin(
+                manager_,
+                config_.broker
+            )
+        )
+        {
+            manager_->end();
+            return false;
+        }
+    }
+
     if (
         !assets_.begin(
             config_.assetCacheBudgetBytes,
@@ -50,6 +76,7 @@ bool AutoMemory::begin(
         )
     )
     {
+        broker_.end();
         manager_->end();
         return false;
     }
@@ -68,6 +95,7 @@ bool AutoMemory::begin(
         if (!framebuffer_ready_)
         {
             assets_.end();
+            broker_.end();
             manager_->end();
             return false;
         }
@@ -87,12 +115,32 @@ bool AutoMemory::begin(
         {
             framebuffers_.end();
             assets_.end();
+            broker_.end();
             manager_->end();
             return false;
         }
     }
 
+    if (
+        broker_.isReady() &&
+        !registerBrokerClients()
+    )
+    {
+        dma_pool_.end();
+        framebuffers_.end();
+        assets_.end();
+        broker_.end();
+        manager_->end();
+
+        dma_ready_ = false;
+        framebuffer_ready_ = false;
+
+        return false;
+    }
+
     ready_ = true;
+
+    syncBrokerUsage();
 
     const MemoryPressure initialPressure =
         manager_->pressure();
@@ -102,6 +150,8 @@ bool AutoMemory::begin(
         true
     );
 
+    syncBrokerUsage();
+
     last_pressure_ =
         manager_->pressure();
 
@@ -110,6 +160,13 @@ bool AutoMemory::begin(
 
 void AutoMemory::end()
 {
+    ready_ = false;
+
+    if (broker_.isReady())
+    {
+        broker_.end();
+    }
+
     if (dma_ready_)
     {
         dma_pool_.end();
@@ -124,7 +181,18 @@ void AutoMemory::end()
 
     dma_ready_ = false;
     framebuffer_ready_ = false;
-    ready_ = false;
+
+    driver_client_ =
+        INVALID_BROKER_CLIENT;
+
+    ui_client_ =
+        INVALID_BROKER_CLIENT;
+
+    asset_client_ =
+        INVALID_BROKER_CLIENT;
+
+    application_client_ =
+        INVALID_BROKER_CLIENT;
 
     if (
         manager_ &&
@@ -164,6 +232,16 @@ void AutoMemory::service()
 
     manager_->service();
 
+    syncBrokerUsage();
+
+    if (broker_.isReady())
+    {
+        broker_.service();
+
+        // A reclaim callback can change cache usage immediately.
+        syncBrokerUsage();
+    }
+
     const MemoryPressure current =
         manager_->pressure();
 
@@ -174,6 +252,8 @@ void AutoMemory::service()
         current,
         stateChanged
     );
+
+    syncBrokerUsage();
 
     // Recovery actions can change the pressure state immediately.
     last_pressure_ =
@@ -200,6 +280,71 @@ AssetCache& AutoMemory::assets()
     return assets_;
 }
 
+MemoryBroker& AutoMemory::broker()
+{
+    return broker_;
+}
+
+BrokerClientId AutoMemory::driverClient() const
+{
+    return driver_client_;
+}
+
+BrokerClientId AutoMemory::uiClient() const
+{
+    return ui_client_;
+}
+
+BrokerClientId AutoMemory::assetClient() const
+{
+    return asset_client_;
+}
+
+BrokerClientId AutoMemory::applicationClient() const
+{
+    return application_client_;
+}
+
+bool AutoMemory::noteUIActivity()
+{
+    return
+        broker_.isReady() &&
+        ui_client_ !=
+            INVALID_BROKER_CLIENT &&
+        broker_.noteActivity(
+            ui_client_
+        );
+}
+
+bool AutoMemory::noteApplicationActivity()
+{
+    return
+        broker_.isReady() &&
+        application_client_ !=
+            INVALID_BROKER_CLIENT &&
+        broker_.noteActivity(
+            application_client_
+        );
+}
+
+size_t AutoMemory::staticControlBytes()
+{
+    return
+        sizeof(MemoryManager) +
+        sizeof(AutoMemory);
+}
+
+size_t AutoMemory::totalPermanentControlBytes() const
+{
+    const BrokerStats brokerStats =
+        broker_.stats();
+
+    return
+        staticControlBytes() +
+        brokerStats.
+            permanentReservedBytes;
+}
+
 const AutoMemoryConfig& AutoMemory::config() const
 {
     return config_;
@@ -220,6 +365,296 @@ MemoryPressure AutoMemory::pressure() const
     return manager_->pressure();
 }
 
+size_t AutoMemory::reclaimAssets(
+    void* userData,
+    size_t targetBytes,
+    BrokerReclaimReason reason
+)
+{
+    AssetCache* cache =
+        static_cast<AssetCache*>(
+            userData
+        );
+
+    if (
+        !cache ||
+        targetBytes == 0
+    )
+    {
+        return 0;
+    }
+
+    if (
+        reason ==
+        BrokerReclaimReason::
+            CriticalPressure
+    )
+    {
+        const AssetCache::Stats stats =
+            cache->stats();
+
+        if (
+            targetBytes >=
+            stats.reclaimableBytes
+        )
+        {
+            return
+                cache->purgeUnpinned();
+        }
+    }
+
+    return
+        cache->evictLRU(
+            targetBytes
+        );
+}
+
+bool AutoMemory::registerBrokerClients()
+{
+    if (!broker_.isReady())
+    {
+        return true;
+    }
+
+    size_t driverFixedBytes = 0;
+
+    if (framebuffer_ready_)
+    {
+        driverFixedBytes =
+            framebuffers_.totalBytes();
+    }
+
+    if (dma_ready_)
+    {
+        const size_t dmaBytes =
+            dma_pool_.blockBytes();
+
+        const size_t dmaCount =
+            dma_pool_.blockCount();
+
+        if (
+            dmaCount != 0 &&
+            dmaBytes <=
+                (
+                    SIZE_MAX /
+                    dmaCount
+                )
+        )
+        {
+            const size_t totalDMA =
+                dmaBytes *
+                dmaCount;
+
+            if (
+                totalDMA <=
+                SIZE_MAX -
+                    driverFixedBytes
+            )
+            {
+                driverFixedBytes +=
+                    totalDMA;
+            }
+        }
+    }
+
+    BrokerClientConfig driverConfig;
+
+    driverConfig.name =
+        "driver-fixed";
+
+    driverConfig.priority =
+        BrokerPriority::Critical;
+
+    driverConfig.minimumBytes =
+        driverFixedBytes;
+
+    driverConfig.softLimitBytes =
+        driverFixedBytes;
+
+    driverConfig.backgroundAfterMs = 0;
+    driverConfig.idleAfterMs = 0;
+
+    driver_client_ =
+        broker_.registerClient(
+            driverConfig
+        );
+
+    if (
+        driver_client_ ==
+        INVALID_BROKER_CLIENT
+    )
+    {
+        return false;
+    }
+
+    broker_.setActivity(
+        driver_client_,
+        BrokerActivity::Active
+    );
+
+    broker_.setObservedUsage(
+        driver_client_,
+        driverFixedBytes,
+        0
+    );
+
+    BrokerClientConfig uiConfig;
+
+    uiConfig.name =
+        "ui";
+
+    uiConfig.priority =
+        BrokerPriority::Normal;
+
+    uiConfig.softLimitBytes =
+        config_.uiSoftBudgetBytes;
+
+    ui_client_ =
+        broker_.registerClient(
+            uiConfig
+        );
+
+    if (
+        ui_client_ ==
+        INVALID_BROKER_CLIENT
+    )
+    {
+        return false;
+    }
+
+    BrokerClientConfig assetConfig;
+
+    assetConfig.name =
+        "assets";
+
+    assetConfig.priority =
+        BrokerPriority::Low;
+
+    assetConfig.softLimitBytes =
+        config_.assetCacheBudgetBytes;
+
+    assetConfig.reclaim =
+        &AutoMemory::reclaimAssets;
+
+    assetConfig.userData =
+        &assets_;
+
+    asset_client_ =
+        broker_.registerClient(
+            assetConfig
+        );
+
+    if (
+        asset_client_ ==
+        INVALID_BROKER_CLIENT
+    )
+    {
+        return false;
+    }
+
+    broker_.setActivity(
+        asset_client_,
+        BrokerActivity::Background
+    );
+
+    BrokerClientConfig applicationConfig;
+
+    applicationConfig.name =
+        "application";
+
+    applicationConfig.priority =
+        BrokerPriority::Normal;
+
+    applicationConfig.softLimitBytes =
+        config_.
+            applicationSoftBudgetBytes;
+
+    application_client_ =
+        broker_.registerClient(
+            applicationConfig
+        );
+
+    return
+        application_client_ !=
+        INVALID_BROKER_CLIENT;
+}
+
+void AutoMemory::syncBrokerUsage()
+{
+    if (!broker_.isReady())
+    {
+        return;
+    }
+
+    if (
+        driver_client_ !=
+        INVALID_BROKER_CLIENT
+    )
+    {
+        size_t driverFixedBytes = 0;
+
+        if (framebuffer_ready_)
+        {
+            driverFixedBytes =
+                framebuffers_.totalBytes();
+        }
+
+        if (dma_ready_)
+        {
+            const size_t dmaBytes =
+                dma_pool_.blockBytes();
+
+            const size_t dmaCount =
+                dma_pool_.blockCount();
+
+            if (
+                dmaCount != 0 &&
+                dmaBytes <=
+                    (
+                        SIZE_MAX /
+                        dmaCount
+                    )
+            )
+            {
+                const size_t totalDMA =
+                    dmaBytes *
+                    dmaCount;
+
+                if (
+                    totalDMA <=
+                    SIZE_MAX -
+                        driverFixedBytes
+                )
+                {
+                    driverFixedBytes +=
+                        totalDMA;
+                }
+            }
+        }
+
+        broker_.setObservedUsage(
+            driver_client_,
+            driverFixedBytes,
+            0
+        );
+    }
+
+    if (
+        asset_client_ !=
+        INVALID_BROKER_CLIENT
+    )
+    {
+        const AssetCache::Stats cache =
+            assets_.stats();
+
+        broker_.setObservedUsage(
+            asset_client_,
+            cache.usedBytes,
+            cache.reclaimableBytes
+        );
+    }
+}
+
 void AutoMemory::applyPressurePolicy(
     MemoryPressure current,
     bool stateChanged
@@ -227,7 +662,62 @@ void AutoMemory::applyPressurePolicy(
 {
     bool acted = false;
 
-    if (
+    if (broker_.isReady())
+    {
+        if (
+            stateChanged &&
+            current ==
+                MemoryPressure::Warning
+        )
+        {
+            const BrokerStats stats =
+                broker_.stats();
+
+            size_t target =
+                (
+                    stats.reclaimableBytes *
+                    config_.broker.
+                        warningReclaimPercent
+                ) /
+                100;
+
+            if (
+                target != 0 &&
+                broker_.reclaimFor(
+                    INVALID_BROKER_CLIENT,
+                    target,
+                    BrokerReclaimReason::
+                        WarningPressure
+                ) > 0
+            )
+            {
+                acted = true;
+            }
+        }
+        else if (
+            stateChanged &&
+            current ==
+                MemoryPressure::Critical
+        )
+        {
+            const BrokerStats stats =
+                broker_.stats();
+
+            if (
+                stats.reclaimableBytes != 0 &&
+                broker_.reclaimFor(
+                    INVALID_BROKER_CLIENT,
+                    stats.reclaimableBytes,
+                    BrokerReclaimReason::
+                        CriticalPressure
+                ) > 0
+            )
+            {
+                acted = true;
+            }
+        }
+    }
+    else if (
         current ==
         MemoryPressure::Warning
     )
@@ -240,10 +730,6 @@ void AutoMemory::applyPressurePolicy(
                 ? 100
                 : config_.warningCachePercent;
 
-        // A fixed cache budget has a stable warning target and can be
-        // continuously enforced. With no hard budget, trim only when
-        // entering Warning so repeated service() calls do not exponentially
-        // shrink the cache toward zero.
         if (before.budgetBytes != 0)
         {
             const size_t target =
@@ -294,26 +780,28 @@ void AutoMemory::applyPressurePolicy(
                 assets_.purgeUnpinned() > 0 ||
                 acted;
         }
+    }
 
-        // Reset scratch once on entry to Critical. beginFrame()
-        // already recycles it on following frames.
+    // Scratch memory is transient. Recycling its contents is safe, but the
+    // arena itself stays available for the next frame.
+    if (
+        current ==
+            MemoryPressure::Critical &&
+        config_.
+            resetScratchOnCritical &&
+        stateChanged
+    )
+    {
         if (
-            config_.
-                resetScratchOnCritical &&
-            stateChanged
+            manager_->
+                scratchUsed() > 0
         )
         {
-            if (
-                manager_->
-                    scratchUsed() > 0
-            )
-            {
-                acted = true;
-            }
-
-            manager_->
-                resetScratch();
+            acted = true;
         }
+
+        manager_->
+            resetScratch();
     }
 
     if (acted)
@@ -395,12 +883,42 @@ size_t AutoMemory::emergencyPurge()
         return 0;
     }
 
-    const size_t freed =
-        assets_.purgeUnpinned();
+    size_t freed = 0;
+
+    syncBrokerUsage();
+
+    if (broker_.isReady())
+    {
+        const BrokerStats stats =
+            broker_.stats();
+
+        if (
+            stats.reclaimableBytes != 0
+        )
+        {
+            freed =
+                broker_.reclaimFor(
+                    INVALID_BROKER_CLIENT,
+                    stats.reclaimableBytes,
+                    BrokerReclaimReason::
+                        CriticalPressure
+                );
+        }
+    }
+    else
+    {
+        freed =
+            assets_.purgeUnpinned();
+    }
 
     manager_->resetScratch();
 
-    ++pressure_actions_;
+    if (freed != 0)
+    {
+        ++pressure_actions_;
+    }
+
+    syncBrokerUsage();
 
     return freed;
 }
@@ -422,6 +940,27 @@ void AutoMemory::dump(
 
     manager_->dump(output);
 
+    output.print(
+        "Static control bytes: "
+    );
+
+    output.println(
+        staticControlBytes()
+    );
+
+    output.print(
+        "Total permanent control bytes: "
+    );
+
+    output.println(
+        totalPermanentControlBytes()
+    );
+
+    if (broker_.isReady())
+    {
+        broker_.dump(output);
+    }
+
     const AssetCache::Stats cache =
         assets_.stats();
 
@@ -432,6 +971,17 @@ void AutoMemory::dump(
     output.print('/');
     output.println(
         cache.budgetBytes
+    );
+
+    output.print(
+        "Asset pinned/reclaimable: "
+    );
+    output.print(
+        cache.pinnedBytes
+    );
+    output.print('/');
+    output.println(
+        cache.reclaimableBytes
     );
 
     output.print(
