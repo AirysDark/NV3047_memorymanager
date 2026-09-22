@@ -237,6 +237,7 @@ void* AssetCache::put(
 {
     if (
         !manager_ ||
+        !manager_->isReady() ||
         bytes == 0
     )
     {
@@ -557,7 +558,14 @@ void* AssetCache::get(
     const int index =
         findIndex(key);
 
-    if (index < 0)
+    if (
+        index < 0 ||
+        !manager_ ||
+        !manager_->isReady() ||
+        !manager_->owns(
+            entries_[index].pointer
+        )
+    )
     {
         ++misses_;
         return nullptr;
@@ -579,7 +587,14 @@ const void* AssetCache::peek(
     const int index =
         findIndex(key);
 
-    if (index < 0)
+    if (
+        index < 0 ||
+        !manager_ ||
+        !manager_->isReady() ||
+        !manager_->owns(
+            entries_[index].pointer
+        )
+    )
     {
         return nullptr;
     }
@@ -593,7 +608,7 @@ bool AssetCache::contains(
 ) const
 {
     return
-        findIndex(key) >= 0;
+        peek(key) != nullptr;
 }
 
 bool AssetCache::pin(
@@ -603,7 +618,14 @@ bool AssetCache::pin(
     const int index =
         findIndex(key);
 
-    if (index < 0)
+    if (
+        index < 0 ||
+        !manager_ ||
+        !manager_->isReady() ||
+        !manager_->owns(
+            entries_[index].pointer
+        )
+    )
     {
         return false;
     }
@@ -621,7 +643,14 @@ bool AssetCache::unpin(
     const int index =
         findIndex(key);
 
-    if (index < 0)
+    if (
+        index < 0 ||
+        !manager_ ||
+        !manager_->isReady() ||
+        !manager_->owns(
+            entries_[index].pointer
+        )
+    )
     {
         return false;
     }
