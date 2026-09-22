@@ -275,14 +275,18 @@ public:
 
     size_t used() const
     {
-        return used_count_;
+        return
+            storageAlive()
+                ? used_count_
+                : 0;
     }
 
     size_t available() const
     {
         return
-            Capacity -
-            used_count_;
+            storageAlive()
+                ? Capacity - used_count_
+                : 0;
     }
 
 private:
