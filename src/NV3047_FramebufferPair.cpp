@@ -277,6 +277,11 @@ void FramebufferPair::clearBoth(
     uint16_t color
 )
 {
+    if (!isReady())
+    {
+        return;
+    }
+
     clearBuffer(
         buffer_a_,
         color
