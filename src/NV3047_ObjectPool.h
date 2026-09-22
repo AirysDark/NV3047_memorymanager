@@ -15,6 +15,11 @@ template <
 >
 class ObjectPool
 {
+    static_assert(
+        Capacity > 0,
+        "ObjectPool Capacity must be greater than zero"
+    );
+
 public:
     ObjectPool()
         : manager_(nullptr),
@@ -56,10 +61,7 @@ public:
                 ? manager
                 : &MemoryManager::instance();
 
-        if (
-            !manager_->isReady() ||
-            Capacity == 0
-        )
+        if (!manager_->isReady())
         {
             manager_ = nullptr;
             return false;
@@ -283,10 +285,10 @@ public:
     }
 
 private:
-    union Slot
+    struct Slot
     {
+        alignas(T)
         uint8_t bytes[sizeof(T)];
-        max_align_t alignment;
     };
 
     MemoryManager* manager_;
