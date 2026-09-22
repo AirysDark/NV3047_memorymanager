@@ -108,7 +108,9 @@ int AssetCache::findFreeIndex() const
     return -1;
 }
 
-int AssetCache::findLRUUnpinned() const
+int AssetCache::findLRUUnpinned(
+    int excludeIndex
+) const
 {
     int candidate = -1;
     uint32_t oldest = 0;
@@ -124,7 +126,9 @@ int AssetCache::findLRUUnpinned() const
 
         if (
             !entry.used ||
-            entry.pinned
+            entry.pinned ||
+            static_cast<int>(i) ==
+                excludeIndex
         )
         {
             continue;
@@ -179,17 +183,24 @@ bool AssetCache::makeRoom(
         return false;
     }
 
+    // A single entry larger than the entire cache budget can never fit.
+    // Reject it without evicting valid cached assets first.
+    if (
+        budget_bytes_ != 0 &&
+        bytes > budget_bytes_
+    )
+    {
+        return false;
+    }
+
     while (
         (
             budget_bytes_ != 0 &&
-            (
-                bytes > budget_bytes_ ||
-                used_bytes_ >
-                    (
-                        budget_bytes_ -
-                        bytes
-                    )
-            )
+            used_bytes_ >
+                (
+                    budget_bytes_ -
+                    bytes
+                )
         ) ||
         findFreeIndex() < 0
     )
@@ -257,10 +268,165 @@ void* AssetCache::put(
             return entry.pointer;
         }
 
-        if (!remove(key))
+        if (
+            budget_bytes_ != 0 &&
+            bytes > budget_bytes_
+        )
         {
             return nullptr;
         }
+
+        // Keep the old entry alive until its replacement is successfully
+        // allocated. This prevents a failed resize from destroying a
+        // previously valid cached asset.
+        size_t effectiveUsed =
+            used_bytes_ >= entry.bytes
+                ? used_bytes_ - entry.bytes
+                : 0;
+
+        while (
+            budget_bytes_ != 0 &&
+            effectiveUsed >
+                (
+                    budget_bytes_ -
+                    bytes
+                )
+        )
+        {
+            const int lru =
+                findLRUUnpinned(
+                    existing
+                );
+
+            if (lru < 0)
+            {
+                return nullptr;
+            }
+
+            const size_t evictedBytes =
+                entries_[lru].bytes;
+
+            const uint32_t lruKey =
+                entries_[lru].key;
+
+            if (!remove(lruKey))
+            {
+                return nullptr;
+            }
+
+            ++evictions_;
+
+            if (
+                effectiveUsed >=
+                evictedBytes
+            )
+            {
+                effectiveUsed -=
+                    evictedBytes;
+            }
+            else
+            {
+                effectiveUsed = 0;
+            }
+        }
+
+        void* replacement =
+            manager_->allocate(
+                bytes,
+                MemoryPurpose::Bitmap,
+                alignment,
+                "asset-cache"
+            );
+
+        while (!replacement)
+        {
+            const int lru =
+                findLRUUnpinned(
+                    existing
+                );
+
+            if (lru < 0)
+            {
+                break;
+            }
+
+            const uint32_t lruKey =
+                entries_[lru].key;
+
+            if (!remove(lruKey))
+            {
+                break;
+            }
+
+            ++evictions_;
+
+            replacement =
+                manager_->allocate(
+                    bytes,
+                    MemoryPurpose::Bitmap,
+                    alignment,
+                    "asset-cache"
+                );
+        }
+
+        if (!replacement)
+        {
+            return nullptr;
+        }
+
+        if (source)
+        {
+            memcpy(
+                replacement,
+                source,
+                bytes
+            );
+        }
+
+        void* oldPointer =
+            entry.pointer;
+
+        const size_t oldBytes =
+            entry.bytes;
+
+        manager_->release(
+            oldPointer
+        );
+
+        if (
+            used_bytes_ >=
+            oldBytes
+        )
+        {
+            used_bytes_ -=
+                oldBytes;
+        }
+        else
+        {
+            used_bytes_ = 0;
+        }
+
+        entry.pointer =
+            replacement;
+
+        entry.bytes = bytes;
+        entry.pinned = pinned;
+        entry.used = true;
+
+        touch(entry);
+
+        used_bytes_ += bytes;
+
+        if (
+            used_bytes_ >
+            peak_bytes_
+        )
+        {
+            peak_bytes_ =
+                used_bytes_;
+        }
+
+        return replacement;
     }
 
     if (!makeRoom(bytes))
@@ -284,31 +450,35 @@ void* AssetCache::put(
             "asset-cache"
         );
 
-    if (!pointer)
+    while (!pointer)
     {
-        // One emergency retry after freeing the least-recently-used
-        // optional cache entry.
+        // Under heap pressure, progressively evict optional LRU assets and
+        // retry. Pinned entries are never selected.
         const int lru =
             findLRUUnpinned();
 
-        if (lru >= 0)
+        if (lru < 0)
         {
-            const uint32_t lruKey =
-                entries_[lru].key;
-
-            if (remove(lruKey))
-            {
-                ++evictions_;
-
-                pointer =
-                    manager_->allocate(
-                        bytes,
-                        MemoryPurpose::Bitmap,
-                        alignment,
-                        "asset-cache"
-                    );
-            }
+            break;
         }
+
+        const uint32_t lruKey =
+            entries_[lru].key;
+
+        if (!remove(lruKey))
+        {
+            break;
+        }
+
+        ++evictions_;
+
+        pointer =
+            manager_->allocate(
+                bytes,
+                MemoryPurpose::Bitmap,
+                alignment,
+                "asset-cache"
+            );
     }
 
     if (!pointer)
