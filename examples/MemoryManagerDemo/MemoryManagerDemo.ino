@@ -61,6 +61,20 @@ void setup()
     config.memory.allowScratchFallback =
         false;
 
+    // Broker permanent control storage is auto-sized from its actual
+    // compiled tables, then given 2 KiB of expansion headroom.
+    config.enableBroker = true;
+
+    config.broker.permanentArenaBytes = 0;
+    config.broker.permanentHeadroomBytes =
+        2 * 1024;
+
+    config.uiSoftBudgetBytes =
+        512 * 1024;
+
+    config.applicationSoftBudgetBytes =
+        512 * 1024;
+
     // Matches driver_overhaul_v2:
     // 2 x 480x272 RGB565, 64-byte aligned in PSRAM.
     config.allocateFramebufferPair =
@@ -104,6 +118,90 @@ void setup()
         Serial.println(
             "ManagedBuffer ready"
         );
+    }
+
+    MemoryBroker& broker =
+        automaticMemory.broker();
+
+    if (broker.isReady())
+    {
+        Serial.print(
+            "Broker exact permanent bytes: "
+        );
+
+        Serial.println(
+            MemoryBroker::
+                requiredPermanentBytes()
+        );
+
+        Serial.print(
+            "Broker reserved with headroom: "
+        );
+
+        Serial.println(
+            broker.stats().
+                permanentReservedBytes
+        );
+
+        // Add reclaimable PSRAM assets. These may be evicted automatically
+        // if a more important active workload needs the space.
+        automaticMemory.assets().put(
+            0x2001,
+            nullptr,
+            64 * 1024,
+            false,
+            4
+        );
+
+        automaticMemory.assets().put(
+            0x2002,
+            nullptr,
+            64 * 1024,
+            false,
+            4
+        );
+
+        automaticMemory.noteUIActivity();
+
+        void* uiWorkingSet =
+            broker.request(
+                automaticMemory.uiClient(),
+                96 * 1024,
+                MemoryPurpose::General,
+                8,
+                "demo-ui-work"
+            );
+
+        // The application is also elastic. If the UI later becomes idle,
+        // application activity can outrank it and borrow available memory.
+        automaticMemory.noteApplicationActivity();
+
+        void* appWorkingSet =
+            broker.request(
+                automaticMemory.
+                    applicationClient(),
+                128 * 1024,
+                MemoryPurpose::General,
+                8,
+                "demo-app-work"
+            );
+
+        if (uiWorkingSet)
+        {
+            broker.release(
+                automaticMemory.uiClient(),
+                uiWorkingSet
+            );
+        }
+
+        if (appWorkingSet)
+        {
+            broker.release(
+                automaticMemory.
+                    applicationClient(),
+                appWorkingSet
+            );
+        }
     }
 
     if (
