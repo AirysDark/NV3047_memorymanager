@@ -2030,6 +2030,21 @@ size_t MemoryBroker::reclaimFor(
         return 0;
     }
 
+    // Reclaim decisions must not depend on service() having run recently.
+    // This keeps activity decay correct on static displays where no frame
+    // service callback may occur for a while.
+    portENTER_CRITICAL(
+        &mux_
+    );
+
+    refreshActivities(
+        millis()
+    );
+
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
     size_t totalFreed = 0;
     uint16_t attemptedMask = 0;
 
