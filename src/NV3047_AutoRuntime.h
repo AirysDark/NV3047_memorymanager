@@ -15,6 +15,9 @@ void nv3047_memorymanager_autoruntime_install();
 bool nv3047_memorymanager_autoruntime_lock();
 void nv3047_memorymanager_autoruntime_unlock();
 
+bool nv3047_memorymanager_autoruntime_minimal_owned();
+void nv3047_memorymanager_autoruntime_clear_minimal_owned();
+
 #ifdef __cplusplus
 }
 #endif
@@ -28,6 +31,7 @@ struct AutoRuntimeStats
     bool taskRunning = false;
     bool managerReady = false;
     bool driverTakeoverActive = false;
+    bool minimalModeOwned = false;
 
     uint32_t automaticStarts = 0;
     uint32_t failedStarts = 0;
