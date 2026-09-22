@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#define NV3047_MEMORY_DISABLE_AUTORUNTIME
 #include <NV3047_Memory.h>
 
 using namespace NV3047Memory;
