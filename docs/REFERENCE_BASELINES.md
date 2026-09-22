@@ -10,10 +10,16 @@ Branch:
 driver_overhaul_v2
 ```
 
-Reference commit when this file was written:
+Original reference commit:
 
 ```text
 25e0b825b72683b7d88b42652e2ba013c540e042
+```
+
+Current observed branch head after external integration changes:
+
+```text
+7fa9382de2709121b8a33c9ae56318f7acef6d61
 ```
 
 Important memory-related files:
@@ -23,6 +29,7 @@ Important memory-related files:
 - `src/Core_Matrices/MemoryManager.cpp`
 - `src/Core_Matrices/framebuffer.h`
 - `src/Core_Matrices/framebuffer.cpp`
+- `src/Core_Matrices/ExternalMemoryProvider.h`
 - `src/Peripherals_HAL/DisplayDriver.cpp`
 - `src/NV3047_Driver.cpp`
 
@@ -35,8 +42,10 @@ Observed production defaults / behavior:
 - 64-byte framebuffer alignment
 - PSRAM + 8-bit framebuffer allocation caps
 - zero buffers on initialization
-- local driver `MemoryManager` owns front/draw buffer indexes
-- `DisplayDriver` lazily allocates one persistent 9,600-byte DMA fill buffer
+- without an external provider, local driver `MemoryManager` owns front/draw buffer indexes
+- current branch can delegate framebuffer ownership through `NV3047MemoryProviderV1`
+- current branch can delegate the persistent 9,600-byte DMA fill buffer through the same provider
+- once a provider is registered, takeover failure does not silently create a competing local framebuffer owner
 - high-level `NV3047_Driver::fillScreen()` uses framebuffer clear + present rather than the HAL fill-buffer path
 
 ## NV3047_UI
@@ -74,5 +83,6 @@ Observed memory/integration behavior:
 
 - The UI branch name is hyphenated: `ui-overhaul-v2`.
 - The driver branch name uses underscores: `driver_overhaul_v2`.
-- These repositories remain read-only references during memory-manager development.
-- Only `NV3047_memorymanager` is modified.
+- The UI repository remains unchanged/read-only.
+- The driver branch now contains provider integration changes made outside this memory-manager development pass.
+- This pass modifies only `NV3047_memorymanager`; it does not make further driver/UI changes.
