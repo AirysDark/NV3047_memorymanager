@@ -6,11 +6,11 @@ using namespace NV3047Memory;
 AutoMemory& automaticMemory =
     AutoMemory::instance();
 
-struct DemoWidgetNode
+struct DemoRuntimeObject
 {
     int value;
 
-    explicit DemoWidgetNode(
+    explicit DemoRuntimeObject(
         int initialValue
     )
         : value(initialValue)
@@ -18,8 +18,10 @@ struct DemoWidgetNode
     }
 };
 
-ObjectPool<DemoWidgetNode, 8>
-    widgetPool;
+// ui-overhaul-v2 already uses a fixed 40-slot Screen widget table.
+// This pool demonstrates optional dynamically-created application objects.
+ObjectPool<DemoRuntimeObject, 8>
+    runtimeObjectPool;
 
 static const uint16_t DEMO_ICON[16] =
 {
@@ -45,6 +47,8 @@ void setup()
     config.memory.scratchBytes =
         64 * 1024;
 
+    // Matches driver_overhaul_v2:
+    // 2 x 480x272 RGB565, 64-byte aligned in PSRAM.
     config.allocateFramebufferPair =
         true;
 
@@ -53,12 +57,12 @@ void setup()
 
     config.enableDMAPool = true;
 
-    // Matches the current driver's 10-line
-    // 480-wide RGB565 temporary DMA buffer.
+    // Matches driver_overhaul_v2 DisplayDriver:
+    // one persistent 10-line RGB565 DMA fill buffer.
     config.dmaBlockBytes =
         480 * 10 * sizeof(uint16_t);
 
-    config.dmaBlockCount = 2;
+    config.dmaBlockCount = 1;
 
     config.assetCacheBudgetBytes =
         512 * 1024;
@@ -75,28 +79,29 @@ void setup()
     MemoryManager& memory =
         automaticMemory.memory();
 
-    // Preallocated UI/control object pool.
     if (
-        widgetPool.begin(
+        runtimeObjectPool.begin(
             &memory,
-            "demo-widget-pool"
+            "demo-runtime-pool"
         )
     )
     {
-        DemoWidgetNode* node =
-            widgetPool.create(42);
+        DemoRuntimeObject* object =
+            runtimeObjectPool.create(42);
 
-        if (node)
+        if (object)
         {
             Serial.print(
-                "UI pool test value: "
+                "Object pool test value: "
             );
 
             Serial.println(
-                node->value
+                object->value
             );
 
-            widgetPool.destroy(node);
+            runtimeObjectPool.destroy(
+                object
+            );
         }
     }
 
