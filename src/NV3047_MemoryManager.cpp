@@ -1220,6 +1220,192 @@ size_t MemoryManager::allocationSize(
     return bytes;
 }
 
+MemoryRegion MemoryManager::allocationRegion(
+    const void* pointer
+) const
+{
+    if (
+        !ready_ ||
+        !pointer
+    )
+    {
+        return MemoryRegion::Auto;
+    }
+
+    MemoryRegion region =
+        MemoryRegion::Auto;
+
+    lock();
+
+    for (
+        size_t i = 0;
+        i < MAX_TRACKED_ALLOCATIONS;
+        ++i
+    )
+    {
+        if (
+            records_[i].used &&
+            records_[i].pointer ==
+                pointer
+        )
+        {
+            region =
+                records_[i].region;
+            break;
+        }
+    }
+
+    unlock();
+
+    return region;
+}
+
+MemoryRegion MemoryManager::preferredRegion(
+    size_t bytes,
+    MemoryPurpose purpose
+) const
+{
+    if (!ready_)
+    {
+        return MemoryRegion::Auto;
+    }
+
+    if (
+        purpose ==
+            MemoryPurpose::Framebuffer &&
+        config_.requirePSRAMForFramebuffer
+    )
+    {
+        return
+            psram_available_
+                ? MemoryRegion::PSRAM
+                : MemoryRegion::Auto;
+    }
+
+    return
+        chooseRegion(
+            bytes,
+            purpose
+        );
+}
+
+HeapStats MemoryManager::regionStats(
+    MemoryRegion region
+) const
+{
+    switch (region)
+    {
+        case MemoryRegion::Internal:
+            return
+                readHeap(
+                    MALLOC_CAP_INTERNAL |
+                    MALLOC_CAP_8BIT
+                );
+
+        case MemoryRegion::PSRAM:
+            if (!psram_available_)
+            {
+                return HeapStats();
+            }
+
+            return
+                readHeap(
+                    MALLOC_CAP_SPIRAM |
+                    MALLOC_CAP_8BIT
+                );
+
+        case MemoryRegion::DMA:
+            return
+                readHeap(
+                    MALLOC_CAP_DMA |
+                    MALLOC_CAP_INTERNAL |
+                    MALLOC_CAP_8BIT
+                );
+
+        case MemoryRegion::Auto:
+        default:
+            return HeapStats();
+    }
+}
+
+bool MemoryManager::validate() const
+{
+    if (!ready_)
+    {
+        return false;
+    }
+
+    size_t bytes = 0;
+    size_t count = 0;
+    bool valid = true;
+
+    lock();
+
+    for (
+        size_t i = 0;
+        i < MAX_TRACKED_ALLOCATIONS;
+        ++i
+    )
+    {
+        const AllocationRecord& record =
+            records_[i];
+
+        if (!record.used)
+        {
+            continue;
+        }
+
+        if (
+            !record.pointer ||
+            record.bytes == 0 ||
+            record.alignment == 0 ||
+            record.region ==
+                MemoryRegion::Auto
+        )
+        {
+            valid = false;
+            break;
+        }
+
+        if (
+            record.bytes >
+            SIZE_MAX - bytes
+        )
+        {
+            valid = false;
+            break;
+        }
+
+        bytes +=
+            record.bytes;
+
+        ++count;
+    }
+
+    if (
+        valid &&
+        (
+            bytes !=
+                tracked_bytes_ ||
+            count !=
+                active_allocations_ ||
+            scratch_offset_ >
+                scratch_capacity_ ||
+            (
+                scratch_capacity_ != 0 &&
+                !scratch_base_
+            )
+        )
+    )
+    {
+        valid = false;
+    }
+
+    unlock();
+
+    return valid;
+}
+
 void MemoryManager::beginFrame()
 {
     resetScratch();
