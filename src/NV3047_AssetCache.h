@@ -75,6 +75,7 @@ public:
     void trimToPercent(uint8_t percent);
 
     Stats stats() const;
+    bool validate() const;
 
 private:
     struct Entry
