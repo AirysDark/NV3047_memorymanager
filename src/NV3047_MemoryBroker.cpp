@@ -2285,6 +2285,154 @@ size_t MemoryBroker::reclaimFor(
     return totalFreed;
 }
 
+bool MemoryBroker::validate() const
+{
+    if (
+        !isReady() ||
+        !manager_->validate()
+    )
+    {
+        return false;
+    }
+
+    size_t managed[MAX_CLIENTS] = {};
+    bool valid = true;
+
+    portENTER_CRITICAL(
+        &mux_
+    );
+
+    if (
+        permanent_required_bytes_ == 0 ||
+        permanent_used_bytes_ <
+            permanent_required_bytes_ ||
+        permanent_reserved_bytes_ <
+            permanent_used_bytes_ ||
+        !clients_ ||
+        !leases_
+    )
+    {
+        valid = false;
+    }
+
+    if (valid)
+    {
+        for (
+            size_t i = 0;
+            i < MAX_LEASES;
+            ++i
+        )
+        {
+            const LeaseRecord& lease =
+                leases_[i];
+
+            if (!lease.used)
+            {
+                continue;
+            }
+
+            if (
+                !lease.pointer ||
+                lease.bytes == 0 ||
+                lease.client ==
+                    INVALID_BROKER_CLIENT ||
+                lease.client >
+                    MAX_CLIENTS ||
+                lease.region ==
+                    MemoryRegion::Auto ||
+                !clients_[lease.client - 1].used
+            )
+            {
+                valid = false;
+                break;
+            }
+
+            for (
+                size_t j = i + 1;
+                j < MAX_LEASES;
+                ++j
+            )
+            {
+                if (
+                    leases_[j].used &&
+                    leases_[j].pointer ==
+                        lease.pointer
+                )
+                {
+                    valid = false;
+                    break;
+                }
+            }
+
+            if (!valid)
+            {
+                break;
+            }
+
+            const size_t index =
+                lease.client - 1;
+
+            if (
+                lease.bytes >
+                SIZE_MAX -
+                    managed[index]
+            )
+            {
+                valid = false;
+                break;
+            }
+
+            managed[index] +=
+                lease.bytes;
+        }
+    }
+
+    if (valid)
+    {
+        for (
+            size_t i = 0;
+            i < MAX_CLIENTS;
+            ++i
+        )
+        {
+            const ClientRecord& client =
+                clients_[i];
+
+            if (!client.used)
+            {
+                if (managed[i] != 0)
+                {
+                    valid = false;
+                    break;
+                }
+
+                continue;
+            }
+
+            if (
+                client.id != i + 1 ||
+                client.managedBytes !=
+                    managed[i] ||
+                (
+                    client.hardLimitBytes != 0 &&
+                    client.minimumBytes >
+                        client.hardLimitBytes
+                )
+            )
+            {
+                valid = false;
+                break;
+            }
+        }
+    }
+
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
+    return valid;
+}
+
 void MemoryBroker::service()
 {
     if (!isReady())
@@ -2506,6 +2654,9 @@ bool MemoryBroker::clientStats(
 
     stats.peakBytes =
         record->peakBytes;
+
+    stats.observedRegion =
+        record->observedRegion;
 
     stats.lastActivityMs =
         record->lastActivityMs;
