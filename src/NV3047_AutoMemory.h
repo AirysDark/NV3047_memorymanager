@@ -96,6 +96,11 @@ private:
     MemoryPressure last_pressure_;
     uint32_t pressure_actions_;
 
+    void applyPressurePolicy(
+        MemoryPressure current,
+        bool stateChanged
+    );
+
     static float fragmentationPercent(
         const HeapStats& heap
     );
