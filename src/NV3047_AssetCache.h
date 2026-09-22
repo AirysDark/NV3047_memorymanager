@@ -100,7 +100,9 @@ private:
 
     int findIndex(uint32_t key) const;
     int findFreeIndex() const;
-    int findLRUUnpinned() const;
+    int findLRUUnpinned(
+        int excludeIndex = -1
+    ) const;
 
     bool makeRoom(size_t bytes);
     void touch(Entry& entry);
