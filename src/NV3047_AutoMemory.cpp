@@ -231,38 +231,50 @@ void AutoMemory::applyPressurePolicy(
         const AssetCache::Stats before =
             assets_.stats();
 
-        size_t reference =
-            before.budgetBytes;
-
-        if (reference == 0)
-        {
-            reference =
-                before.usedBytes;
-        }
-
         const uint8_t percent =
             config_.warningCachePercent > 100
                 ? 100
                 : config_.warningCachePercent;
 
-        const size_t target =
-            (
-                reference *
-                percent
-            ) /
-            100;
-
-        if (before.usedBytes > target)
+        // A fixed cache budget has a stable warning target and can be
+        // continuously enforced. With no hard budget, trim only when
+        // entering Warning so repeated service() calls do not exponentially
+        // shrink the cache toward zero.
+        if (before.budgetBytes != 0)
         {
-            assets_.trimToBytes(target);
+            const size_t target =
+                (
+                    before.budgetBytes *
+                    percent
+                ) /
+                100;
 
-            const AssetCache::Stats after =
-                assets_.stats();
-
-            acted =
-                after.usedBytes <
-                before.usedBytes;
+            if (before.usedBytes > target)
+            {
+                assets_.trimToBytes(target);
+            }
         }
+        else if (
+            stateChanged &&
+            before.usedBytes != 0
+        )
+        {
+            const size_t target =
+                (
+                    before.usedBytes *
+                    percent
+                ) /
+                100;
+
+            assets_.trimToBytes(target);
+        }
+
+        const AssetCache::Stats after =
+            assets_.stats();
+
+        acted =
+            after.usedBytes <
+            before.usedBytes;
     }
     else if (
         current ==
