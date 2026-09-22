@@ -8,6 +8,9 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+// Arduino-ESP32 2.0.17 defines this after initArduino() completes.
+extern TaskHandle_t loopTaskHandle;
+
 namespace
 {
 
@@ -50,10 +53,9 @@ static volatile uint32_t background_service_passes = 0;
 static const TickType_t SERVICE_DELAY =
     pdMS_TO_TICKS(250);
 
-// Arduino-ESP32 2.0.17 sets this handle only after initArduino() has
+// Arduino-ESP32 2.0.17 sets loopTaskHandle only after initArduino() has
 // completed. initArduino() performs psramInit(), so waiting for the loop task
 // is the deterministic boundary before any PSRAM-aware memory startup.
-extern TaskHandle_t loopTaskHandle;
 
 bool startMinimalAutomaticMemory()
 {
@@ -291,6 +293,18 @@ AutoRuntimeStats automaticRuntimeStats()
         sizeof(automatic_starts) +
         sizeof(failed_starts) +
         sizeof(background_service_passes);
+
+    result.managerControlBytes =
+        AutoMemory::instance().
+            totalPermanentControlBytes();
+
+    result.totalPermanentControlBytes =
+        result.managerControlBytes >
+                SIZE_MAX -
+                    result.staticRuntimeBytes
+            ? SIZE_MAX
+            : result.managerControlBytes +
+                result.staticRuntimeBytes;
 
     return result;
 }
