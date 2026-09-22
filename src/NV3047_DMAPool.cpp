@@ -116,6 +116,14 @@ void DMAPool::end()
 
 void* DMAPool::acquire()
 {
+    if (
+        !manager_ ||
+        !manager_->isReady()
+    )
+    {
+        return nullptr;
+    }
+
     for (
         uint8_t i = 0;
         i < block_count_;
@@ -124,6 +132,9 @@ void* DMAPool::acquire()
     {
         if (
             blocks_[i].pointer &&
+            manager_->owns(
+                blocks_[i].pointer
+            ) &&
             !blocks_[i].inUse
         )
         {
@@ -178,7 +189,11 @@ bool DMAPool::owns(
     const void* pointer
 ) const
 {
-    if (!pointer)
+    if (
+        !pointer ||
+        !manager_ ||
+        !manager_->isReady()
+    )
     {
         return false;
     }
@@ -191,7 +206,8 @@ bool DMAPool::owns(
     {
         if (
             blocks_[i].pointer ==
-            pointer
+            pointer &&
+            manager_->owns(pointer)
         )
         {
             return true;
@@ -205,7 +221,11 @@ bool DMAPool::isInUse(
     const void* pointer
 ) const
 {
-    if (!pointer)
+    if (
+        !pointer ||
+        !manager_ ||
+        !manager_->isReady()
+    )
     {
         return false;
     }
@@ -218,7 +238,8 @@ bool DMAPool::isInUse(
     {
         if (
             blocks_[i].pointer ==
-            pointer
+            pointer &&
+            manager_->owns(pointer)
         )
         {
             return
