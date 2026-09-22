@@ -207,7 +207,11 @@ const AutoMemoryConfig& AutoMemory::config() const
 
 MemoryPressure AutoMemory::pressure() const
 {
-    if (!manager_)
+    if (
+        !ready_ ||
+        !manager_ ||
+        !manager_->isReady()
+    )
     {
         return
             MemoryPressure::Critical;
@@ -356,7 +360,11 @@ FragmentationStats AutoMemory::fragmentation() const
 {
     FragmentationStats result;
 
-    if (!manager_)
+    if (
+        !ready_ ||
+        !manager_ ||
+        !manager_->isReady()
+    )
     {
         return result;
     }
