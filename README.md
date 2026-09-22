@@ -9,6 +9,13 @@ This repository is the dedicated memory subsystem for:
 
 The driver and UI repositories are currently read-only references. All development and changes for memory management live in this repository.
 
+### Active reference branches
+
+- `NV3047_drivers:driver_overhaul_v2`
+- `NV3047_UI:ui-overhaul-v2`
+
+These overhaul branches are the source of truth for integration decisions.
+
 ## Target
 
 - ESP32-S3
@@ -19,7 +26,7 @@ The driver and UI repositories are currently read-only references. All developme
 
 ## Current version
 
-**0.2.0**
+**0.2.1**
 
 The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
 
@@ -30,13 +37,18 @@ The reference driver currently uses two 480 x 272 RGB565 framebuffers:
 - one framebuffer: **261,120 bytes**
 - two framebuffers: **522,240 bytes**
 
-The current driver also creates a 10-line RGB565 DMA-compatible temporary buffer:
+In `driver_overhaul_v2`, the display HAL lazily allocates one persistent 10-line DMA-capable RGB565 fill buffer and keeps it until the display driver is destroyed:
 
 - 480 x 10 x 2 bytes = **9,600 bytes**
 
-The current UI dynamically creates widget-list nodes.
+The same driver branch already contains its own local `Core_Matrices/MemoryManager` that owns the framebuffer pair and exposes framebuffer diagnostics.
 
-The memory manager is designed to take ownership of all three categories when the other libraries are later connected to it.
+In `ui-overhaul-v2`, the screen manager already avoids per-widget heap allocation with a fixed table:
+
+- `Screen::MAX_WIDGETS = 40`
+- `WidgetSlot widgets[40]`
+
+The external memory manager is therefore intended to replace the driver's local framebuffer allocation policy, own persistent DMA working memory, manage graphical assets and scratch memory, and provide optional pools only for genuinely dynamic application objects.
 
 ## Architecture
 
@@ -128,9 +140,9 @@ Features:
 
 Preallocates reusable DMA-capable internal-RAM blocks.
 
-This replaces repeated `heap_caps_malloc(... MALLOC_CAP_DMA)` / free cycles with stable reusable blocks.
+`driver_overhaul_v2` currently allocates its 9,600-byte fill buffer once on first use and keeps it until destruction. The takeover target is therefore ownership transfer rather than fixing per-frame allocation churn.
 
-The default automatic configuration creates two 9,600-byte blocks, matching the current driver's 10-line temporary screen-fill buffer size.
+The default automatic configuration now creates **one 9,600-byte block**, matching that production behavior. Extra blocks can still be configured if future concurrent DMA work needs them.
 
 ### `AssetCache`
 
@@ -151,7 +163,7 @@ Features:
 
 ### `ObjectPool<T, Capacity>`
 
-Fixed-capacity typed object pool intended for UI/control structures such as widget nodes.
+Fixed-capacity typed object pool for optional runtime-created application/UI objects. The overhaul UI's normal Screen widget registry already uses fixed member storage and does not need this pool.
 
 Features:
 
@@ -206,7 +218,7 @@ void setup()
     config.dmaBlockBytes =
         480 * 10 * sizeof(uint16_t);
 
-    config.dmaBlockCount = 2;
+    config.dmaBlockCount = 1;
 
     if (!memory.begin(config))
     {
@@ -313,58 +325,66 @@ if (dma)
 
 The block remains allocated to the pool and is immediately reusable.
 
-## UI object pool
+## Optional object pool
+
+`ui-overhaul-v2` already uses a fixed 40-entry `WidgetSlot` table, so its normal screen registry should remain as-is.
+
+`ObjectPool<T, Capacity>` is for objects that are genuinely created and destroyed at runtime, for example dynamic pages, reusable dialogs or model/view objects:
 
 ```cpp
-struct WidgetNode
+struct RuntimeObject
 {
-    void* widget;
-    WidgetNode* next;
-    uint8_t z;
+    int value;
 };
 
-ObjectPool<WidgetNode, 64> nodes;
+ObjectPool<RuntimeObject, 16> objects;
 
-nodes.begin(
+objects.begin(
     &memory.memory(),
-    "widget-nodes"
+    "runtime-objects"
 );
 
-WidgetNode* node =
-    nodes.create();
+RuntimeObject* object =
+    objects.create();
 
-nodes.destroy(node);
+objects.destroy(object);
 ```
-
-This is the intended future replacement for repeated UI widget-node `new` / `delete` operations.
 
 ## Future driver takeover
 
-When `NV3047_drivers` is later changed to allow this repository to control its memory, the intended ownership becomes:
+`driver_overhaul_v2` already centralises its two framebuffers behind `Core_Matrices/MemoryManager`. The clean takeover is to keep the driver's public framebuffer behavior while replacing that local allocator with a thin adapter over this repository:
 
 ```text
-Current driver Framebuffer::buffer_a
-    -> AutoMemory::framebuffers().front/back
+driver Core_Matrices/MemoryManager
+    -> NV3047_memorymanager AutoMemory / FramebufferPair
 
-Current driver Framebuffer::buffer_b
-    -> AutoMemory::framebuffers().front/back
+driver getFrontBuffer()
+    -> FramebufferPair::front()
 
-Current DisplayDriver temporary DMA malloc
-    -> AutoMemory::dmaPool().acquire()
+driver getDrawBuffer()
+    -> FramebufferPair::back()
 
-Current repeated graphical asset allocations
-    -> AutoMemory::assets()
+driver swapBuffers()
+    -> FramebufferPair::swapRoles()
+
+DisplayDriver persistent 9,600-byte DMA fill buffer
+    -> managed DMA block ownership
+
+driver framebuffer diagnostics
+    -> external MemoryManager statistics
 ```
 
-The driver should no longer independently allocate its own framebuffer memory after takeover.
+After takeover there should be only one framebuffer owner. The driver remains responsible for presentation timing and panel submission; this library owns the storage policy.
 
 ## Future UI takeover
 
-When `NV3047_UI` is later connected:
+`ui-overhaul-v2` already has deterministic fixed storage for up to 40 registered widgets, so that part should not be replaced.
+
+The useful integration points are:
 
 ```text
-Widget nodes
-    -> ObjectPool
+existing Screen::WidgetSlot[40]
+    -> keep unchanged
 
 temporary render/layout working memory
     -> frame scratch arena
@@ -372,11 +392,17 @@ temporary render/layout working memory
 runtime icons/images
     -> AssetCache
 
-large UI data
+optional dynamically-created objects
+    -> ObjectPool
+
+large UI/application data
     -> MemoryManager automatic allocator
+
+existing UIDriverStats memory fields
+    -> preserve through driver adapter
 ```
 
-This keeps the UI focused on rendering and layout while this library decides where memory lives.
+This keeps the UI focused on rendering and layout while avoiding unnecessary changes to an already deterministic widget registry.
 
 ## Public include
 
@@ -404,7 +430,8 @@ NV3047_memorymanager/
 │   └── workflows/
 │       └── compile.yml
 ├── docs/
-│   └── INTEGRATION_PLAN.md
+│   ├── INTEGRATION_PLAN.md
+│   └── REFERENCE_BASELINES.md
 ├── examples/
 │   └── MemoryManagerDemo/
 │       └── MemoryManagerDemo.ino
