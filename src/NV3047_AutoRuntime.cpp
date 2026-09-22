@@ -11,9 +11,22 @@
 namespace
 {
 
-// ESP-IDF's FreeRTOS API uses stack depth in bytes. 1024 StackType_t entries
-// give the automatic runtime a 4096-byte permanent stack on ESP32-S3.
-static StackType_t runtime_task_stack[1024];
+// ESP-IDF's FreeRTOS API uses task stack depth in bytes. StackType_t is
+// uint8_t on ESP32-S3, but size from bytes so this remains correct if the
+// underlying port type changes later.
+static constexpr size_t RUNTIME_STACK_BYTES =
+    4096;
+
+static_assert(
+    RUNTIME_STACK_BYTES %
+        sizeof(StackType_t) == 0,
+    "Runtime stack byte size must align to StackType_t"
+);
+
+static StackType_t runtime_task_stack[
+    RUNTIME_STACK_BYTES /
+    sizeof(StackType_t)
+];
 static StaticTask_t runtime_task_tcb;
 static StaticSemaphore_t runtime_mutex_storage;
 
@@ -158,7 +171,7 @@ nv3047_memorymanager_autoruntime_install()
         xTaskCreateStaticPinnedToCore(
             &runtimeTask,
             "nv3047-mem",
-            sizeof(runtime_task_stack),
+            RUNTIME_STACK_BYTES,
             nullptr,
             tskIDLE_PRIORITY + 1,
             runtime_task_stack,
@@ -243,10 +256,25 @@ AutoRuntimeStats automaticRuntimeStats()
     result.backgroundServicePasses =
         background_service_passes;
 
+    result.runtimeStackBytes =
+        sizeof(runtime_task_stack);
+
+    result.minimumFreeStackBytes =
+        runtime_task
+            ? static_cast<size_t>(
+                  uxTaskGetStackHighWaterMark(
+                      runtime_task
+                  )
+              ) *
+                  sizeof(StackType_t)
+            : 0;
+
     result.staticRuntimeBytes =
         sizeof(runtime_task_stack) +
         sizeof(runtime_task_tcb) +
         sizeof(runtime_mutex_storage) +
+        sizeof(runtime_mutex) +
+        sizeof(runtime_task) +
         sizeof(runtime_mutex) +
         sizeof(runtime_task) +
         sizeof(install_mux) +
