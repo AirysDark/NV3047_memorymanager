@@ -244,8 +244,37 @@ void* AssetCache::put(
         return nullptr;
     }
 
-    const int existing =
+    int existing =
         findIndex(key);
+
+    if (
+        existing >= 0 &&
+        !manager_->owns(
+            entries_[existing].pointer
+        )
+    )
+    {
+        if (
+            used_bytes_ >=
+            entries_[existing].bytes
+        )
+        {
+            used_bytes_ -=
+                entries_[existing].bytes;
+        }
+        else
+        {
+            used_bytes_ = 0;
+        }
+
+        memset(
+            &entries_[existing],
+            0,
+            sizeof(Entry)
+        );
+
+        existing = -1;
+    }
 
     if (existing >= 0)
     {
