@@ -26,6 +26,19 @@ Important memory-related files:
 - `src/Peripherals_HAL/DisplayDriver.cpp`
 - `src/NV3047_Driver.cpp`
 
+Observed production defaults / behavior:
+
+- 480 x 272 RGB565
+- 2 framebuffers
+- 261,120 bytes per framebuffer
+- 522,240 bytes total framebuffer storage
+- 64-byte framebuffer alignment
+- PSRAM + 8-bit framebuffer allocation caps
+- zero buffers on initialization
+- local driver `MemoryManager` owns front/draw buffer indexes
+- `DisplayDriver` lazily allocates one persistent 9,600-byte DMA fill buffer
+- high-level `NV3047_Driver::fillScreen()` uses framebuffer clear + present rather than the HAL fill-buffer path
+
 ## NV3047_UI
 
 Branch:
@@ -46,6 +59,16 @@ Important memory/integration files:
 - `src/NV3047_UI.cpp`
 - `src/NV3047_UI_Extras.h`
 - `README.md`
+
+Observed memory/integration behavior:
+
+- `Screen::MAX_WIDGETS = 40`
+- widget registration uses fixed inline `WidgetSlot` storage
+- normal screen/widget registration performs no per-widget heap allocation
+- `UIDriverStats` exposes framebuffer count, size, allocated bytes, free managed memory and largest free managed block
+- UI presentation cadence remains owned by the driver
+- UI consumes the driver's already-mapped touch coordinates
+- UI is explicitly tuned to `driver_overhaul_v2`
 
 ## Notes
 
