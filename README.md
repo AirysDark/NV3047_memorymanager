@@ -26,9 +26,38 @@ These overhaul branches are the source of truth for integration decisions.
 
 ## Current version
 
-**0.4.0**
+**0.5.0**
 
 The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
+
+## 0.5.0 include-only automatic runtime
+
+Normal sketches now enable the memory system with exactly:
+
+```cpp
+#include <NV3047_Memory.h>
+```
+
+No sketch-side `AutoMemory::begin()`, `beginFrame()`, `service()`, driver-provider registration or activity call is required for the normal path.
+
+The umbrella include installs a small permanent static runtime that:
+
+- starts lightweight manager/broker mode automatically
+- services pressure/activity/fragmentation monitoring every 250 ms even when the display is static
+- upgrades automatically to full framebuffer/DMA ownership when the NV3047 driver requests takeover
+- returns to lightweight mode if the driver-owned configuration is later shut down
+- uses static FreeRTOS task/mutex storage rather than heap-backed runtime-control objects
+
+Driver frame boundaries still recycle frame scratch automatically, but frame rate is **not** treated as proof that the UI is a heavy workload. Actual broker allocations/touches raise workload activity; future UI-internal hooks can report genuine UI input/activity without adding anything to the sketch.
+
+For advanced/manual testing only, automatic startup can be disabled before the umbrella include:
+
+```cpp
+#define NV3047_MEMORY_DISABLE_AUTORUNTIME
+#include <NV3047_Memory.h>
+```
+
+The normal public API remains include-only.
 
 ## 0.4.0 region-aware recovery
 
@@ -122,12 +151,13 @@ CI now compiles both the normal demo and this stress test against ESP32 Arduino 
 
 Adding the library to an NV3047 sketch now automatically hands framebuffer and driver-DMA ownership to `NV3047_memorymanager`.
 
-The sketch only needs the normal public include:
+The only line added for memory management is:
 
 ```cpp
 #include <NV3047_Memory.h>
-#include <NV3047_Driver.h>
 ```
+
+The sketch may of course include and use `NV3047_Driver.h` as it normally would; no additional memory-manager setup is required.
 
 No explicit registration call and no mandatory `AutoMemory::begin()` call are required. `NV3047_Memory.h` installs a small startup registrar before Arduino `setup()`. When `NV3047_drivers:driver_overhaul_v2` starts, its local `Core_Matrices/MemoryManager` detects the registered provider and becomes a thin adapter over this library.
 
@@ -341,7 +371,7 @@ The built-in `AutoMemory` setup registers:
 
 High-level automatic controller.
 
-It can start the complete memory system with one call and preallocate:
+It owns the complete memory system. In normal include-only mode startup/service are automatic; advanced code can still configure it explicitly. It can preallocate:
 
 - a double framebuffer pair
 - a reusable DMA block pool
@@ -431,40 +461,13 @@ No individual `free()` calls are required.
 
 ## Recommended automatic startup
 
+For a normal sketch, this is the complete memory-manager integration:
+
 ```cpp
 #include <NV3047_Memory.h>
-
-using namespace NV3047Memory;
-
-AutoMemory& memory =
-    AutoMemory::instance();
-
-void setup()
-{
-    AutoMemoryConfig config;
-
-    config.framebufferWidth = 480;
-    config.framebufferHeight = 272;
-
-    config.memory.scratchBytes =
-        64 * 1024;
-
-    config.assetCacheBudgetBytes =
-        512 * 1024;
-
-    config.dmaBlockBytes =
-        480 * 10 * sizeof(uint16_t);
-
-    config.dmaBlockCount = 1;
-
-    if (!memory.begin(config))
-    {
-        // Memory system could not reserve
-        // the required resources.
-        return;
-    }
-}
 ```
+
+The runtime and driver-provider bridge initialize automatically. Configuration classes and explicit `begin()` calls remain available for advanced/manual tests, custom hardware and library development, but they are not required by the normal sketch.
 
 ## Automatic placement policy
 
@@ -678,6 +681,7 @@ The umbrella header exposes:
 - `ObjectPool<T, Capacity>`
 - `AssetCache`
 - `AutoMemory`
+- `AutoRuntimeStats` / automatic include runtime
 
 ## Repository layout
 
@@ -710,14 +714,19 @@ NV3047_memorymanager/
 │   ├── NV3047_AssetCache.h
 │   ├── NV3047_AssetCache.cpp
 │   ├── NV3047_AutoMemory.h
-│   └── NV3047_AutoMemory.cpp
+│   ├── NV3047_AutoMemory.cpp
+│   ├── NV3047_AutoRuntime.h
+│   ├── NV3047_AutoRuntime.cpp
+│   ├── NV3047_DriverTakeover.h
+│   ├── NV3047_DriverTakeover.cpp
+│   └── NV3047_MemoryProviderABI.h
 ├── library.properties
 └── README.md
 ```
 
 ## Build verification
 
-GitHub Actions compiles both `MemoryManagerDemo` and `AdaptiveStressTest` against:
+GitHub Actions compiles the include-only sketch, `MemoryManagerDemo`, `AdaptiveStressTest`, and the live driver-takeover integration against:
 
 - `esp32:esp32@2.0.17`
 - `ESP32-S3 Dev Module`
