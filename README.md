@@ -364,26 +364,35 @@ These policies are configurable in `MemoryConfig`, but the defaults are intentio
 
 ## Automatic pressure handling
 
-`AutoMemory::service()` checks the base manager pressure state.
+`AutoMemory::service()` synchronizes real driver/cache usage into the broker, updates activity decay, and evaluates heap pressure.
+
+### Normal
+
+No forced reclamation. Workloads may grow past soft budgets while the protected heap reserves remain healthy.
 
 ### Warning
 
-The asset cache is trimmed toward the configured warning percentage. Fixed-budget caches remain continuously capped while Warning pressure persists. Unlimited-budget caches trim once on Warning entry instead of repeatedly shrinking toward zero.
+The broker reclaims a configurable portion of memory from the least-important eligible donors first. Idle/background clients and clients above their soft budget are preferred.
 
 ### Critical
 
-The automatic controller can:
+The broker can reclaim all eligible optional memory needed to recover, including:
 
-- purge all unpinned cached assets
-- reset transient scratch usage
-- preserve pinned assets
-- preserve live framebuffers
-- preserve active UI objects
-- preserve DMA pool ownership
+- unpinned asset-cache entries
+- elastic UI/application working buffers
+- memory exposed through client reclaim callbacks
 
-The manager deliberately does **not** destroy live persistent application objects simply to recover RAM.
+It still preserves:
 
-Pressure policy is evaluated at startup and during `service()`, so a system that starts already in Warning/Critical pressure still receives the appropriate recovery action.
+- framebuffer storage
+- pinned assets
+- non-elastic live allocations
+- DMA pool ownership
+- configured client minimum-retained floors
+
+Scratch contents are reset on Critical entry because they are transient, but the scratch arena remains available for the next frame.
+
+Pressure policy is evaluated at startup and during `service()`, so a system that starts already in Warning/Critical pressure receives recovery immediately.
 
 ## Fragmentation monitoring
 
