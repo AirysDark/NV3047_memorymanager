@@ -56,6 +56,20 @@ size_t MemoryBroker::alignUp(
 
 size_t MemoryBroker::requiredPermanentBytes()
 {
+#if UINTPTR_MAX == 0xFFFFFFFF
+    // ESP32-S3 / Arduino Core 2.0.17 uses a 32-bit ABI.
+    // Keep the exact permanent broker table footprint intentional.
+    static_assert(
+        sizeof(ClientRecord) == 72,
+        "Broker ClientRecord footprint changed"
+    );
+
+    static_assert(
+        sizeof(LeaseRecord) == 12,
+        "Broker LeaseRecord footprint changed"
+    );
+#endif
+
     size_t offset = 0;
 
     offset =
