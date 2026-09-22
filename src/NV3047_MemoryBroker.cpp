@@ -513,8 +513,7 @@ size_t MemoryBroker::elasticReclaimable(
         if (
             !lease.used ||
             !lease.reclaimable ||
-            lease.client != client ||
-            lease.bytes > maximumBytes
+            lease.client != client
         )
         {
             continue;
