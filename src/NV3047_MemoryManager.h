@@ -93,8 +93,8 @@ struct MemoryConfig
     // Disable only for hardware that intentionally supports internal-RAM frames.
     bool requirePSRAMForFramebuffer = true;
 
-    // Ownership bookkeeping is always enabled for safe release/end behavior.
-    // This flag controls tag/listing diagnostics, not pointer ownership.
+    // Ownership bookkeeping and tags are always retained for safe cleanup.
+    // This flag controls verbose per-allocation listing in dump().
     bool enableTracking = true;
 
     // service() monitoring cadence.
@@ -164,6 +164,11 @@ public:
             count > (SIZE_MAX / sizeof(T))
         )
         {
+            if (ready_)
+            {
+                noteFailure();
+            }
+
             return nullptr;
         }
 
