@@ -111,9 +111,11 @@ The first external integration target should preserve the current production def
 - preferred region: PSRAM
 - zero on startup: enabled
 
-### 5. Temporary DMA screen-fill memory
+### 5. Persistent DMA screen-fill memory
 
-Replace temporary DMA allocation with:
+`driver_overhaul_v2` currently allocates one 9,600-byte DMA-capable fill buffer lazily on first use and retains it until `DisplayDriver` destruction.
+
+The integration goal is to transfer ownership of that persistent working buffer to this library. One compatible path is:
 
 ```cpp
 void* block =
@@ -121,14 +123,14 @@ void* block =
         dmaPool().acquire();
 ```
 
-Return it after the transaction:
+The driver can retain the borrowed block for its lifetime and return it during shutdown:
 
 ```cpp
 AutoMemory::instance().
     dmaPool().release(block);
 ```
 
-The default pool block size is intended to match the driver's current 10-line fill buffer.
+The default pool now contains one 9,600-byte block, matching the current overhaul driver behavior.
 
 ### 6. Driver scratch work
 
@@ -145,11 +147,11 @@ They must not survive the next `beginFrame()`.
 
 ### 1. Keep fixed widget slots
 
-The overhaul UI already avoids per-widget heap churn.
+The overhaul UI already avoids per-widget heap churn with `Screen::MAX_WIDGETS = 40` and an inline `WidgetSlot widgets[MAX_WIDGETS]` table.
 
-Do not replace the existing 40-entry fixed `WidgetSlot` array just for the sake of using the memory-manager library.
+Do not replace this table just for the sake of routing everything through the memory-manager library.
 
-Deterministic stack/member storage is already a good embedded design.
+Deterministic member storage is already the correct embedded design here.
 
 ### 2. Assets
 
