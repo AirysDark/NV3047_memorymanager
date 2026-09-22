@@ -117,6 +117,9 @@ struct BrokerClientStats
     size_t reclaimableBytes = 0;
     size_t peakBytes = 0;
 
+    MemoryRegion observedRegion =
+        MemoryRegion::Auto;
+
     uint32_t lastActivityMs = 0;
 };
 
@@ -196,7 +199,9 @@ public:
     bool setObservedUsage(
         BrokerClientId client,
         size_t bytes,
-        size_t reclaimableBytes
+        size_t reclaimableBytes,
+        MemoryRegion region =
+            MemoryRegion::Auto
     );
 
     bool setReclaimer(
@@ -257,8 +262,12 @@ public:
     size_t reclaimFor(
         BrokerClientId requester,
         size_t targetBytes,
-        BrokerReclaimReason reason
+        BrokerReclaimReason reason,
+        MemoryRegion targetRegion =
+            MemoryRegion::Auto
     );
+
+    bool validate() const;
 
     void service();
 
@@ -296,6 +305,7 @@ private:
         BrokerPriority priority;
         BrokerActivity activity;
         bool used;
+        MemoryRegion observedRegion;
 
         char name[CLIENT_NAME_LENGTH];
     };
@@ -312,6 +322,7 @@ private:
 
         BrokerClientId client;
         MemoryPurpose purpose;
+        MemoryRegion region;
         bool reclaimable;
         bool used;
     };
@@ -363,8 +374,15 @@ private:
     ) const;
 
     size_t availableReclaim(
-        const ClientRecord& client
+        const ClientRecord& client,
+        MemoryRegion targetRegion =
+            MemoryRegion::Auto
     ) const;
+
+    static bool regionCanSatisfy(
+        MemoryRegion donor,
+        MemoryRegion target
+    );
 
     uint16_t importance(
         const ClientRecord& client
@@ -380,11 +398,14 @@ private:
     int findBestDonor(
         BrokerClientId requester,
         uint16_t attemptedMask,
-        BrokerReclaimReason reason
+        BrokerReclaimReason reason,
+        MemoryRegion targetRegion
     ) const;
 
     size_t elasticReclaimable(
-        BrokerClientId client
+        BrokerClientId client,
+        MemoryRegion targetRegion =
+            MemoryRegion::Auto
     ) const;
 
     int findOldestElasticLease(
@@ -394,7 +415,8 @@ private:
 
     size_t reclaimElastic(
         BrokerClientId client,
-        size_t targetBytes
+        size_t targetBytes,
+        MemoryRegion targetRegion
     );
 
     void* requestInternal(
