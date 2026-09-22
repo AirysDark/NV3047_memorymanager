@@ -42,11 +42,14 @@ No sketch-side `AutoMemory::begin()`, `beginFrame()`, `service()`, driver-provid
 
 The umbrella include installs a small permanent static runtime that:
 
+- waits until Arduino initialization has completed and PSRAM has been initialized
 - starts lightweight manager/broker mode automatically
-- services pressure/activity/fragmentation monitoring every 250 ms even when the display is static
+- services pressure/activity/fragmentation monitoring in the background while no external NV3047 driver takeover is active
 - upgrades automatically to full framebuffer/DMA ownership when the NV3047 driver requests takeover
+- lets the active driver perform full reclaim/service at safe frame boundaries rather than evicting cache data asynchronously during rendering
+- refreshes broker activity on-demand before reclaim decisions, so static screens still age into valid donor states
 - returns to lightweight mode if the driver-owned configuration is later shut down
-- uses static FreeRTOS task/mutex storage rather than heap-backed runtime-control objects
+- uses a real **4096-byte** static FreeRTOS task stack plus static mutex/task-control storage rather than heap-backed runtime-control objects
 
 Driver frame boundaries still recycle frame scratch automatically, but frame rate is **not** treated as proof that the UI is a heavy workload. Actual broker allocations/touches raise workload activity; future UI-internal hooks can report genuine UI input/activity without adding anything to the sketch.
 
@@ -58,6 +61,20 @@ For advanced/manual testing only, automatic startup can be disabled before the u
 ```
 
 The normal public API remains include-only.
+
+Runtime control-memory diagnostics are available when debugging:
+
+```cpp
+NV3047Memory::AutoRuntimeStats stats =
+    NV3047Memory::automaticRuntimeStats();
+
+Serial.println(stats.runtimeStackBytes);
+Serial.println(stats.minimumFreeStackBytes);
+Serial.println(stats.managerControlBytes);
+Serial.println(stats.totalPermanentControlBytes);
+```
+
+The runtime stack high-water value is intended for hardware tuning; the normal sketch does not need to call this API.
 
 ## 0.4.0 region-aware recovery
 
