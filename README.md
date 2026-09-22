@@ -26,9 +26,22 @@ These overhaul branches are the source of truth for integration decisions.
 
 ## Current version
 
-**0.2.1**
+**0.2.2**
 
 The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
+
+## 0.2.2 audit hardening
+
+A full code review added several safety fixes:
+
+- manager ownership records remain active even when detailed tag diagnostics are disabled, so `end()` can still release managed allocations safely
+- impossible alignment requests fail cleanly instead of risking size wrap
+- framebuffer PSRAM policy is enforced through both `allocateFramebuffer()` and generic `MemoryPurpose::Framebuffer` allocation
+- cached assets larger than the cache budget fail without evicting valid entries first
+- resizing a cached asset preserves the old entry until the replacement allocation succeeds
+- framebuffer, DMA pool, object pool, asset cache and managed-buffer accessors guard against stale backing allocations
+- automatic pressure handling continues enforcing fixed cache budgets while pressure remains high
+- unlimited-budget Warning handling no longer repeatedly reduces the cache every frame
 
 ## Current NV3047 memory pressure
 
@@ -87,11 +100,14 @@ Features:
 - allocation purpose classification
 - configurable internal-RAM reserve
 - configurable PSRAM reserve
+- strict PSRAM framebuffer ownership by default
+- bitmap/scratch fallback protection to preserve internal RAM
 - 64-byte aligned framebuffer allocation
 - RGB565 allocation helpers
 - DMA-only allocation helpers
 - allocation tagging
 - grouped cleanup by tag
+- always-on ownership bookkeeping for safe shutdown
 - ownership checking
 - tracked allocation size
 - high-water statistics
@@ -151,6 +167,8 @@ PSRAM-oriented cache for RGB565 images, icons and other graphical data.
 Features:
 
 - fixed metadata table
+- replacement-safe cache updates
+- oversized-entry rejection without destroying valid cache contents
 - no STL containers
 - configurable byte budget
 - 32-bit asset keys
@@ -243,7 +261,14 @@ void setup()
 
 The manager protects configurable reserve amounts before approving allocations.
 
-DMA requests never fall back into memory that is not DMA capable.
+For the NV3047 defaults:
+
+- framebuffers are required to live in PSRAM
+- bitmap/cache allocations do not fall back into internal RAM when PSRAM is present but pressured
+- the scratch arena does not fall back into internal RAM when PSRAM allocation fails
+- DMA requests never fall back into memory that is not DMA capable
+
+These policies are configurable in `MemoryConfig`, but the defaults are intentionally conservative for `driver_overhaul_v2`.
 
 ## Automatic pressure handling
 
@@ -251,7 +276,7 @@ DMA requests never fall back into memory that is not DMA capable.
 
 ### Warning
 
-The asset cache is trimmed toward the configured warning percentage.
+The asset cache is trimmed toward the configured warning percentage. Fixed-budget caches remain continuously capped while Warning pressure persists. Unlimited-budget caches trim once on Warning entry instead of repeatedly shrinking toward zero.
 
 ### Critical
 
@@ -265,6 +290,8 @@ The automatic controller can:
 - preserve DMA pool ownership
 
 The manager deliberately does **not** destroy live persistent application objects simply to recover RAM.
+
+Pressure policy is evaluated at startup and during `service()`, so a system that starts already in Warning/Critical pressure still receives the appropriate recovery action.
 
 ## Fragmentation monitoring
 
