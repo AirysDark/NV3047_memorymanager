@@ -50,6 +50,11 @@ static volatile uint32_t background_service_passes = 0;
 static const TickType_t SERVICE_DELAY =
     pdMS_TO_TICKS(250);
 
+// Arduino-ESP32 2.0.17 sets this handle only after initArduino() has
+// completed. initArduino() performs psramInit(), so waiting for the loop task
+// is the deterministic boundary before any PSRAM-aware memory startup.
+extern TaskHandle_t loopTaskHandle;
+
 bool startMinimalAutomaticMemory()
 {
     NV3047Memory::AutoMemory& automatic =
@@ -89,9 +94,13 @@ void runtimeTask(void*)
 {
     task_running = true;
 
-    // Yield once so Arduino/core startup can finish before the first automatic
-    // heap reservation. Driver takeover may start first; that path is valid.
-    vTaskDelay(1);
+    // Do not touch the memory system until Arduino initialization has
+    // completed. In Core 2.0.17 loopTaskHandle is assigned after initArduino(),
+    // which includes PSRAM initialization.
+    while (loopTaskHandle == nullptr)
+    {
+        vTaskDelay(1);
+    }
 
     while (true)
     {
@@ -273,8 +282,6 @@ AutoRuntimeStats automaticRuntimeStats()
         sizeof(runtime_task_stack) +
         sizeof(runtime_task_tcb) +
         sizeof(runtime_mutex_storage) +
-        sizeof(runtime_mutex) +
-        sizeof(runtime_task) +
         sizeof(runtime_mutex) +
         sizeof(runtime_task) +
         sizeof(install_mux) +
