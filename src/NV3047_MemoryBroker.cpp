@@ -58,14 +58,14 @@ size_t MemoryBroker::requiredPermanentBytes()
 {
 #if UINTPTR_MAX == 0xFFFFFFFF
     // ESP32-S3 / Arduino Core 2.0.17 uses a 32-bit ABI.
-    // Keep the exact permanent broker table footprint intentional.
+    // These assertions keep the permanent broker footprint intentional.
     static_assert(
         sizeof(ClientRecord) == 72,
         "Broker ClientRecord footprint changed"
     );
 
     static_assert(
-        sizeof(LeaseRecord) == 12,
+        sizeof(LeaseRecord) == 24,
         "Broker LeaseRecord footprint changed"
     );
 #endif
@@ -296,6 +296,9 @@ void MemoryBroker::end()
         while (true)
         {
             void* pointer = nullptr;
+            BrokerLeaseReclaimedCallback callback =
+                nullptr;
+            void* callbackData = nullptr;
 
             portENTER_CRITICAL(
                 &mux_
@@ -307,35 +310,48 @@ void MemoryBroker::end()
                 ++i
             )
             {
-                if (leases_[i].used)
+                LeaseRecord& lease =
+                    leases_[i];
+
+                if (!lease.used)
                 {
-                    pointer =
-                        leases_[i].pointer;
+                    continue;
+                }
 
-                    const BrokerClientId id =
-                        leases_[i].client;
+                pointer =
+                    lease.pointer;
 
-                    ClientRecord* client =
-                        clientRecord(id);
+                if (lease.reclaimable)
+                {
+                    callback =
+                        lease.onReclaimed;
 
-                    if (
-                        client &&
-                        client->managedBytes >=
-                            leases_[i].bytes
-                    )
-                    {
-                        client->managedBytes -=
-                            leases_[i].bytes;
-                    }
+                    callbackData =
+                        lease.userData;
+                }
 
-                    memset(
-                        &leases_[i],
-                        0,
-                        sizeof(LeaseRecord)
+                ClientRecord* client =
+                    clientRecord(
+                        lease.client
                     );
 
-                    break;
+                if (
+                    client &&
+                    client->managedBytes >=
+                        lease.bytes
+                )
+                {
+                    client->managedBytes -=
+                        lease.bytes;
                 }
+
+                memset(
+                    &lease,
+                    0,
+                    sizeof(LeaseRecord)
+                );
+
+                break;
             }
 
             portEXIT_CRITICAL(
@@ -345,6 +361,14 @@ void MemoryBroker::end()
             if (!pointer)
             {
                 break;
+            }
+
+            if (callback)
+            {
+                callback(
+                    callbackData,
+                    pointer
+                );
             }
 
             manager_->release(
@@ -462,6 +486,54 @@ size_t MemoryBroker::totalBytes(
         client.observedBytes;
 }
 
+size_t MemoryBroker::elasticReclaimable(
+    BrokerClientId client
+) const
+{
+    if (
+        !leases_ ||
+        client ==
+            INVALID_BROKER_CLIENT
+    )
+    {
+        return 0;
+    }
+
+    size_t total = 0;
+
+    for (
+        size_t i = 0;
+        i < MAX_LEASES;
+        ++i
+    )
+    {
+        const LeaseRecord& lease =
+            leases_[i];
+
+        if (
+            !lease.used ||
+            !lease.reclaimable ||
+            lease.client != client
+        )
+        {
+            continue;
+        }
+
+        if (
+            lease.bytes >
+            SIZE_MAX - total
+        )
+        {
+            return SIZE_MAX;
+        }
+
+        total +=
+            lease.bytes;
+    }
+
+    return total;
+}
+
 size_t MemoryBroker::availableReclaim(
     const ClientRecord& client
 ) const
@@ -470,9 +542,40 @@ size_t MemoryBroker::availableReclaim(
         totalBytes(client);
 
     if (
-        total <= client.minimumBytes ||
-        client.reclaimableBytes == 0
+        total <= client.minimumBytes
     )
+    {
+        return 0;
+    }
+
+    size_t external =
+        client.reclaim
+            ? client.reclaimableBytes
+            : 0;
+
+    const size_t elastic =
+        elasticReclaimable(
+            client.id
+        );
+
+    size_t reclaimable =
+        external;
+
+    if (
+        elastic >
+        SIZE_MAX - reclaimable
+    )
+    {
+        reclaimable =
+            SIZE_MAX;
+    }
+    else
+    {
+        reclaimable +=
+            elastic;
+    }
+
+    if (reclaimable == 0)
     {
         return 0;
     }
@@ -482,9 +585,9 @@ size_t MemoryBroker::availableReclaim(
         client.minimumBytes;
 
     return
-        client.reclaimableBytes <
+        reclaimable <
             aboveMinimum
-            ? client.reclaimableBytes
+            ? reclaimable
             : aboveMinimum;
 }
 
@@ -531,6 +634,9 @@ BrokerClientId MemoryBroker::registerClient(
         return
             INVALID_BROKER_CLIENT;
     }
+
+    const uint32_t now =
+        millis();
 
     portENTER_CRITICAL(
         &mux_
@@ -589,7 +695,7 @@ BrokerClientId MemoryBroker::registerClient(
                 config.userData;
 
             record.lastActivityMs =
-                millis();
+                now;
 
             record.name[0] =
                 '\0';
@@ -693,12 +799,14 @@ bool MemoryBroker::setPriority(
             priority;
     }
 
+    const bool ok =
+        record != nullptr;
+
     portEXIT_CRITICAL(
         &mux_
     );
 
-    return
-        record != nullptr;
+    return ok;
 }
 
 bool MemoryBroker::setActivity(
@@ -730,12 +838,14 @@ bool MemoryBroker::setActivity(
             now;
     }
 
+    const bool ok =
+        record != nullptr;
+
     portEXIT_CRITICAL(
         &mux_
     );
 
-    return
-        record != nullptr;
+    return ok;
 }
 
 bool MemoryBroker::noteActivity(
@@ -782,12 +892,101 @@ bool MemoryBroker::setObservedUsage(
         );
     }
 
+    const bool ok =
+        record != nullptr;
+
     portEXIT_CRITICAL(
         &mux_
     );
 
-    return
+    return ok;
+}
+
+bool MemoryBroker::setReclaimer(
+    BrokerClientId client,
+    BrokerReclaimCallback reclaim,
+    void* userData
+)
+{
+    if (!isReady())
+    {
+        return false;
+    }
+
+    portENTER_CRITICAL(
+        &mux_
+    );
+
+    ClientRecord* record =
+        clientRecord(client);
+
+    if (record)
+    {
+        record->reclaim =
+            reclaim;
+
+        record->userData =
+            userData;
+    }
+
+    const bool ok =
         record != nullptr;
+
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
+    return ok;
+}
+
+bool MemoryBroker::setLimits(
+    BrokerClientId client,
+    size_t minimumBytes,
+    size_t softLimitBytes,
+    size_t hardLimitBytes
+)
+{
+    if (!isReady())
+    {
+        return false;
+    }
+
+    if (
+        hardLimitBytes != 0 &&
+        minimumBytes >
+            hardLimitBytes
+    )
+    {
+        return false;
+    }
+
+    portENTER_CRITICAL(
+        &mux_
+    );
+
+    ClientRecord* record =
+        clientRecord(client);
+
+    if (record)
+    {
+        record->minimumBytes =
+            minimumBytes;
+
+        record->softLimitBytes =
+            softLimitBytes;
+
+        record->hardLimitBytes =
+            hardLimitBytes;
+    }
+
+    const bool ok =
+        record != nullptr;
+
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
+    return ok;
 }
 
 int MemoryBroker::findFreeLease() const
@@ -852,17 +1051,65 @@ int MemoryBroker::findLease(
     return -1;
 }
 
-void* MemoryBroker::request(
+int MemoryBroker::findOldestElasticLease(
+    BrokerClientId client
+) const
+{
+    int candidate = -1;
+    uint32_t oldest = 0;
+
+    for (
+        size_t i = 0;
+        i < MAX_LEASES;
+        ++i
+    )
+    {
+        const LeaseRecord& lease =
+            leases_[i];
+
+        if (
+            !lease.used ||
+            !lease.reclaimable ||
+            lease.client != client
+        )
+        {
+            continue;
+        }
+
+        if (
+            candidate < 0 ||
+            lease.lastUseMs < oldest
+        )
+        {
+            candidate =
+                static_cast<int>(i);
+
+            oldest =
+                lease.lastUseMs;
+        }
+    }
+
+    return candidate;
+}
+
+void* MemoryBroker::requestInternal(
     BrokerClientId client,
     size_t bytes,
     MemoryPurpose purpose,
     size_t alignment,
-    const char* tag
+    const char* tag,
+    bool reclaimable,
+    BrokerLeaseReclaimedCallback onReclaimed,
+    void* userData
 )
 {
     if (
         !isReady() ||
-        bytes == 0
+        bytes == 0 ||
+        (
+            reclaimable &&
+            !onReclaimed
+        )
     )
     {
         return nullptr;
@@ -944,6 +1191,8 @@ void* MemoryBroker::request(
     }
 
     bool recorded = false;
+    const uint32_t now =
+        millis();
 
     portENTER_CRITICAL(
         &mux_
@@ -969,16 +1218,34 @@ void* MemoryBroker::request(
         lease.bytes =
             bytes;
 
+        lease.onReclaimed =
+            onReclaimed;
+
+        lease.userData =
+            userData;
+
+        lease.lastUseMs =
+            now;
+
         lease.client =
             client;
 
         lease.purpose =
             purpose;
 
+        lease.reclaimable =
+            reclaimable;
+
         lease.used = true;
 
         record->managedBytes +=
             bytes;
+
+        record->activity =
+            BrokerActivity::Active;
+
+        record->lastActivityMs =
+            now;
 
         accountPeak(
             *record
@@ -1007,6 +1274,107 @@ void* MemoryBroker::request(
     return pointer;
 }
 
+void* MemoryBroker::request(
+    BrokerClientId client,
+    size_t bytes,
+    MemoryPurpose purpose,
+    size_t alignment,
+    const char* tag
+)
+{
+    return
+        requestInternal(
+            client,
+            bytes,
+            purpose,
+            alignment,
+            tag,
+            false,
+            nullptr,
+            nullptr
+        );
+}
+
+void* MemoryBroker::requestElastic(
+    BrokerClientId client,
+    size_t bytes,
+    MemoryPurpose purpose,
+    size_t alignment,
+    const char* tag,
+    BrokerLeaseReclaimedCallback onReclaimed,
+    void* userData
+)
+{
+    return
+        requestInternal(
+            client,
+            bytes,
+            purpose,
+            alignment,
+            tag,
+            true,
+            onReclaimed,
+            userData
+        );
+}
+
+bool MemoryBroker::touch(
+    BrokerClientId client,
+    const void* pointer
+)
+{
+    if (
+        !isReady() ||
+        !pointer
+    )
+    {
+        return false;
+    }
+
+    const uint32_t now =
+        millis();
+
+    portENTER_CRITICAL(
+        &mux_
+    );
+
+    const int index =
+        findLease(
+            client,
+            pointer
+        );
+
+    bool touched = false;
+
+    if (index >= 0)
+    {
+        leases_[index].lastUseMs =
+            now;
+
+        ClientRecord* record =
+            clientRecord(
+                leases_[index].client
+            );
+
+        if (record)
+        {
+            record->activity =
+                BrokerActivity::Active;
+
+            record->lastActivityMs =
+                now;
+        }
+
+        touched = true;
+    }
+
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
+    return touched;
+}
+
 bool MemoryBroker::release(
     BrokerClientId client,
     void* pointer
@@ -1021,6 +1389,9 @@ bool MemoryBroker::release(
     }
 
     bool found = false;
+    BrokerLeaseReclaimedCallback callback =
+        nullptr;
+    void* callbackData = nullptr;
 
     portENTER_CRITICAL(
         &mux_
@@ -1052,6 +1423,15 @@ bool MemoryBroker::release(
                 lease.bytes;
         }
 
+        if (lease.reclaimable)
+        {
+            callback =
+                lease.onReclaimed;
+
+            callbackData =
+                lease.userData;
+        }
+
         memset(
             &lease,
             0,
@@ -1067,6 +1447,14 @@ bool MemoryBroker::release(
 
     if (found)
     {
+        if (callback)
+        {
+            callback(
+                callbackData,
+                pointer
+            );
+        }
+
         manager_->release(
             pointer
         );
@@ -1165,6 +1553,120 @@ bool MemoryBroker::owns(
     );
 
     return found;
+}
+
+size_t MemoryBroker::reclaimElastic(
+    BrokerClientId client,
+    size_t targetBytes
+)
+{
+    if (
+        !isReady() ||
+        client ==
+            INVALID_BROKER_CLIENT ||
+        targetBytes == 0
+    )
+    {
+        return 0;
+    }
+
+    size_t freed = 0;
+
+    while (
+        freed <
+        targetBytes
+    )
+    {
+        void* pointer = nullptr;
+        size_t bytes = 0;
+        BrokerLeaseReclaimedCallback callback =
+            nullptr;
+        void* callbackData = nullptr;
+
+        portENTER_CRITICAL(
+            &mux_
+        );
+
+        const int index =
+            findOldestElasticLease(
+                client
+            );
+
+        if (index >= 0)
+        {
+            LeaseRecord& lease =
+                leases_[index];
+
+            pointer =
+                lease.pointer;
+
+            bytes =
+                lease.bytes;
+
+            callback =
+                lease.onReclaimed;
+
+            callbackData =
+                lease.userData;
+
+            ClientRecord* record =
+                clientRecord(
+                    lease.client
+                );
+
+            if (
+                record &&
+                record->managedBytes >=
+                    lease.bytes
+            )
+            {
+                record->managedBytes -=
+                    lease.bytes;
+            }
+
+            memset(
+                &lease,
+                0,
+                sizeof(LeaseRecord)
+            );
+        }
+
+        portEXIT_CRITICAL(
+            &mux_
+        );
+
+        if (!pointer)
+        {
+            break;
+        }
+
+        if (callback)
+        {
+            callback(
+                callbackData,
+                pointer
+            );
+        }
+
+        manager_->release(
+            pointer
+        );
+
+        if (
+            bytes >
+            SIZE_MAX - freed
+        )
+        {
+            freed =
+                SIZE_MAX;
+            break;
+        }
+
+        freed +=
+            bytes;
+    }
+
+    return freed;
 }
 
 void MemoryBroker::refreshActivities(
@@ -1275,7 +1777,6 @@ int MemoryBroker::findBestDonor(
         if (
             !donor.used ||
             donor.id == requester ||
-            !donor.reclaim ||
             donor.priority ==
                 BrokerPriority::Critical
         )
@@ -1384,7 +1885,10 @@ size_t MemoryBroker::reclaimFor(
             nullptr;
 
         void* userData = nullptr;
-        size_t available = 0;
+        size_t externalAvailable = 0;
+        size_t totalAvailable = 0;
+        BrokerClientId donorId =
+            INVALID_BROKER_CLIENT;
         int donorIndex = -1;
 
         portENTER_CRITICAL(
@@ -1403,13 +1907,21 @@ size_t MemoryBroker::reclaimFor(
             ClientRecord& donor =
                 clients_[donorIndex];
 
+            donorId =
+                donor.id;
+
             callback =
                 donor.reclaim;
 
             userData =
                 donor.userData;
 
-            available =
+            externalAvailable =
+                callback
+                    ? donor.reclaimableBytes
+                    : 0;
+
+            totalAvailable =
                 availableReclaim(
                     donor
                 );
@@ -1421,8 +1933,9 @@ size_t MemoryBroker::reclaimFor(
 
         if (
             donorIndex < 0 ||
-            !callback ||
-            available == 0
+            donorId ==
+                INVALID_BROKER_CLIENT ||
+            totalAvailable == 0
         )
         {
             break;
@@ -1440,15 +1953,15 @@ size_t MemoryBroker::reclaimFor(
 
         size_t ask =
             remaining <
-                available
+                totalAvailable
                 ? remaining
-                : available;
+                : totalAvailable;
 
         if (
             ask <
                 config_.
                     minimumReclaimBytes &&
-            available >=
+            totalAvailable >=
                 config_.
                     minimumReclaimBytes
         )
@@ -1458,74 +1971,148 @@ size_t MemoryBroker::reclaimFor(
                     minimumReclaimBytes;
         }
 
-        if (ask > available)
+        if (ask > totalAvailable)
         {
-            ask = available;
+            ask =
+                totalAvailable;
         }
 
-        const size_t freed =
-            callback(
-                userData,
-                ask,
-                reason
-            );
+        size_t donorFreed = 0;
 
-        if (freed == 0)
+        if (
+            callback &&
+            externalAvailable != 0
+        )
+        {
+            const size_t externalAsk =
+                ask <
+                    externalAvailable
+                    ? ask
+                    : externalAvailable;
+
+            const size_t reported =
+                callback(
+                    userData,
+                    externalAsk,
+                    reason
+                );
+
+            const size_t credited =
+                reported <=
+                        externalAvailable
+                    ? reported
+                    : externalAvailable;
+
+            if (credited != 0)
+            {
+                portENTER_CRITICAL(
+                    &mux_
+                );
+
+                ClientRecord* donor =
+                    clientRecord(
+                        donorId
+                    );
+
+                if (donor)
+                {
+                    if (
+                        donor->observedBytes >=
+                            credited
+                    )
+                    {
+                        donor->observedBytes -=
+                            credited;
+                    }
+                    else
+                    {
+                        donor->observedBytes = 0;
+                    }
+
+                    if (
+                        donor->reclaimableBytes >=
+                            credited
+                    )
+                    {
+                        donor->reclaimableBytes -=
+                            credited;
+                    }
+                    else
+                    {
+                        donor->reclaimableBytes = 0;
+                    }
+                }
+
+                portEXIT_CRITICAL(
+                    &mux_
+                );
+
+                donorFreed +=
+                    credited;
+            }
+        }
+
+        if (
+            donorFreed < ask
+        )
+        {
+            const size_t elasticFreed =
+                reclaimElastic(
+                    donorId,
+                    ask -
+                        donorFreed
+                );
+
+            if (
+                elasticFreed >
+                SIZE_MAX -
+                    donorFreed
+            )
+            {
+                donorFreed =
+                    SIZE_MAX;
+            }
+            else
+            {
+                donorFreed +=
+                    elasticFreed;
+            }
+        }
+
+        if (donorFreed == 0)
         {
             continue;
         }
 
-        const size_t credited =
-            freed <= available
-                ? freed
-                : available;
-
-        portENTER_CRITICAL(
-            &mux_
-        );
-
-        ClientRecord& donor =
-            clients_[donorIndex];
-
-        if (donor.used)
+        if (
+            donorFreed >
+            SIZE_MAX -
+                totalFreed
+        )
         {
-            if (
-                donor.observedBytes >=
-                credited
-            )
-            {
-                donor.observedBytes -=
-                    credited;
-            }
-            else
-            {
-                donor.observedBytes = 0;
-            }
-
-            if (
-                donor.reclaimableBytes >=
-                credited
-            )
-            {
-                donor.reclaimableBytes -=
-                    credited;
-            }
-            else
-            {
-                donor.reclaimableBytes = 0;
-            }
+            totalFreed =
+                SIZE_MAX;
+            break;
         }
 
-        portEXIT_CRITICAL(
-            &mux_
-        );
-
         totalFreed +=
-            credited;
+            donorFreed;
     }
 
-    reclaimed_bytes_ +=
-        totalFreed;
+    if (
+        totalFreed >
+        SIZE_MAX -
+            reclaimed_bytes_
+    )
+    {
+        reclaimed_bytes_ =
+            SIZE_MAX;
+    }
+    else
+    {
+        reclaimed_bytes_ +=
+            totalFreed;
+    }
 
     return totalFreed;
 }
@@ -1571,27 +2158,29 @@ void MemoryBroker::service()
         ++i
     )
     {
-        if (clients_[i].used)
+        if (!clients_[i].used)
         {
-            const size_t value =
-                availableReclaim(
-                    clients_[i]
-                );
-
-            if (
-                value >
-                SIZE_MAX -
-                    reclaimable
-            )
-            {
-                reclaimable =
-                    SIZE_MAX;
-                break;
-            }
-
-            reclaimable +=
-                value;
+            continue;
         }
+
+        const size_t value =
+            availableReclaim(
+                clients_[i]
+            );
+
+        if (
+            value >
+            SIZE_MAX -
+                reclaimable
+        )
+        {
+            reclaimable =
+                SIZE_MAX;
+            break;
+        }
+
+        reclaimable +=
+            value;
     }
 
     portEXIT_CRITICAL(
@@ -1820,16 +2409,55 @@ BrokerStats MemoryBroker::stats() const
 
         ++result.registeredClients;
 
-        result.managedBytes +=
-            client.managedBytes;
+        if (
+            client.managedBytes >
+            SIZE_MAX -
+                result.managedBytes
+        )
+        {
+            result.managedBytes =
+                SIZE_MAX;
+        }
+        else
+        {
+            result.managedBytes +=
+                client.managedBytes;
+        }
 
-        result.observedBytes +=
-            client.observedBytes;
+        if (
+            client.observedBytes >
+            SIZE_MAX -
+                result.observedBytes
+        )
+        {
+            result.observedBytes =
+                SIZE_MAX;
+        }
+        else
+        {
+            result.observedBytes +=
+                client.observedBytes;
+        }
 
-        result.reclaimableBytes +=
+        const size_t reclaimable =
             availableReclaim(
                 client
             );
+
+        if (
+            reclaimable >
+            SIZE_MAX -
+                result.reclaimableBytes
+        )
+        {
+            result.reclaimableBytes =
+                SIZE_MAX;
+        }
+        else
+        {
+            result.reclaimableBytes +=
+                reclaimable;
+        }
     }
 
     for (
