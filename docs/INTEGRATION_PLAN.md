@@ -99,7 +99,11 @@ Those decisions belong in `NV3047_memorymanager`.
 
 ### 1. Startup
 
-`NV3047_Memory.h` now auto-registers the provider before Arduino `setup()`. When the driver initializes its framebuffer subsystem, the bridge starts `AutoMemory` automatically if the application has not already started it.
+`NV3047_Memory.h` is the complete normal sketch integration. It installs the automatic runtime and provider registrar before Arduino `setup()`.
+
+The runtime starts lightweight manager/broker mode without allocating a duplicate framebuffer or DMA pool. When the driver initializes, the provider upgrades that lightweight instance into the full framebuffer/DMA configuration automatically.
+
+No sketch-side `AutoMemory::begin()`, `beginFrame()`, `service()` or provider-registration call is required.
 
 ### 2. Replace local driver MemoryManager — implemented
 
@@ -197,14 +201,16 @@ Deterministic member storage is already the correct embedded design here.
 
 ### 2. UI activity
 
-The UI should notify the manager when it is genuinely being used:
+The sketch must not report UI activity manually.
 
-```cpp
-AutoMemory::instance().
-    noteUIActivity();
-```
+UI activity should be generated internally by the UI/memory integration from genuine workload signals such as:
 
-Good trigger points include successful touch/input activity and active UI working-set access.
+- successful touch/input handling
+- active elastic-buffer access
+- asset-cache use
+- dynamic layout/render working-set use
+
+Driver frame swaps are only frame-lifetime boundaries and are **not** treated as proof that the UI is heavily used.
 
 The broker automatically decays inactive UI clients through Background to Idle.
 
@@ -266,31 +272,35 @@ When the external manager takes control, preserve these diagnostic semantics so 
 
 ## Render-loop target
 
-The eventual top-level frame lifecycle should resemble:
+The sketch should not contain memory-manager lifecycle code.
+
+Normal sketch:
 
 ```cpp
-AutoMemory& memory =
-    AutoMemory::instance();
-
-void loop()
-{
-    memory.beginFrame();
-
-    // UI input
-    // UI layout
-    // render into the driver's draw buffer,
-    // backed by memory.framebuffers().back()
-
-    // driver presents the draw buffer
-
-    memory.framebuffers().
-        swapRoles();
-
-    memory.service();
-}
+#include <NV3047_Memory.h>
 ```
 
-The driver remains responsible for presentation cadence and physical display submission. The memory manager owns the storage.
+Internally:
+
+```text
+umbrella include
+    -> automatic runtime starts manager/broker service
+
+driver successful frame
+    -> provider beginFrame()
+    -> scratch lifetime reset
+
+background runtime
+    -> periodic service()
+    -> pressure monitoring
+    -> activity decay
+    -> reclaim/fragmentation maintenance
+
+driver presentation
+    -> FramebufferPair role swap
+```
+
+The driver remains responsible for presentation cadence and physical display submission. The memory manager owns storage and background memory policy.
 
 Application subsystems that can discard/rebuild working data should register a broker reclaimer or use elastic leases. This is what allows memory to move back from an idle non-UI workload to an active UI workload as well as in the opposite direction.
 
