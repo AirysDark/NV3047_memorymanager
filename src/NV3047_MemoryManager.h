@@ -24,7 +24,8 @@ enum class MemoryPurpose : uint8_t
     Framebuffer,
     Bitmap,
     Scratch,
-    DMA
+    DMA,
+    Control
 };
 
 enum class MemoryPressure : uint8_t
@@ -197,6 +198,14 @@ public:
         size_t bytes,
         size_t alignment = 4,
         const char* tag = "dma"
+    );
+
+    // Permanent manager/broker control memory. Always internal RAM,
+    // never falls back to PSRAM, and is not intended for application data.
+    void* allocateControl(
+        size_t bytes,
+        size_t alignment = 8,
+        const char* tag = "manager-control"
     );
 
     void release(void* pointer);
