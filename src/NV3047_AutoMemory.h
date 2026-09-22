@@ -4,6 +4,7 @@
 #include "NV3047_FramebufferPair.h"
 #include "NV3047_DMAPool.h"
 #include "NV3047_AssetCache.h"
+#include "NV3047_MemoryBroker.h"
 
 namespace NV3047Memory
 {
@@ -11,6 +12,13 @@ namespace NV3047Memory
 struct AutoMemoryConfig
 {
     MemoryConfig memory;
+    BrokerConfig broker;
+
+    bool enableBroker = true;
+
+    // Soft budgets are elastic guidance, not fixed partitions.
+    size_t uiSoftBudgetBytes = 512 * 1024;
+    size_t applicationSoftBudgetBytes = 512 * 1024;
 
     bool allocateFramebufferPair = true;
 
@@ -66,6 +74,18 @@ public:
     FramebufferPair& framebuffers();
     DMAPool& dmaPool();
     AssetCache& assets();
+    MemoryBroker& broker();
+
+    BrokerClientId driverClient() const;
+    BrokerClientId uiClient() const;
+    BrokerClientId assetClient() const;
+    BrokerClientId applicationClient() const;
+
+    bool noteUIActivity();
+    bool noteApplicationActivity();
+
+    static size_t staticControlBytes();
+    size_t totalPermanentControlBytes() const;
 
     const AutoMemoryConfig& config() const;
 
@@ -88,6 +108,12 @@ private:
     FramebufferPair framebuffers_;
     DMAPool dma_pool_;
     AssetCache assets_;
+    MemoryBroker broker_;
+
+    BrokerClientId driver_client_;
+    BrokerClientId ui_client_;
+    BrokerClientId asset_client_;
+    BrokerClientId application_client_;
 
     bool ready_;
     bool framebuffer_ready_;
@@ -99,6 +125,15 @@ private:
     void applyPressurePolicy(
         MemoryPressure current,
         bool stateChanged
+    );
+
+    bool registerBrokerClients();
+    void syncBrokerUsage();
+
+    static size_t reclaimAssets(
+        void* userData,
+        size_t targetBytes,
+        BrokerReclaimReason reason
     );
 
     static float fragmentationPercent(
