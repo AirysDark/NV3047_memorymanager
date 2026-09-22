@@ -442,10 +442,7 @@ bool MemoryManager::trackAllocation(
 
             record.tag[0] = '\0';
 
-            if (
-                config_.enableTracking &&
-                tag
-            )
+            if (tag)
             {
                 strncpy(
                     record.tag,
@@ -1027,8 +1024,7 @@ size_t MemoryManager::releaseTag(
 {
     if (
         !ready_ ||
-        !tag ||
-        !config_.enableTracking
+        !tag
     )
     {
         return 0;
