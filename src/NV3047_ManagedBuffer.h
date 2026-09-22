@@ -132,35 +132,54 @@ public:
         }
     }
 
+    bool valid() const
+    {
+        return
+            data_ != nullptr &&
+            manager_ != nullptr &&
+            manager_->isReady() &&
+            manager_->owns(data_);
+    }
+
     T* data()
     {
-        return data_;
+        return
+            valid()
+                ? data_
+                : nullptr;
     }
 
     const T* data() const
     {
-        return data_;
+        return
+            valid()
+                ? data_
+                : nullptr;
     }
 
     size_t size() const
     {
-        return count_;
+        return
+            valid()
+                ? count_
+                : 0;
     }
 
     size_t sizeBytes() const
     {
-        return count_ *
+        return
+            size() *
             sizeof(T);
     }
 
     bool empty() const
     {
-        return data_ == nullptr;
+        return !valid();
     }
 
     explicit operator bool() const
     {
-        return data_ != nullptr;
+        return valid();
     }
 
     T& operator[](
