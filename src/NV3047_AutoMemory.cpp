@@ -1060,6 +1060,27 @@ bool AutoMemory::validate() const
     return true;
 }
 
+void AutoMemory::setPerformanceProfiling(
+    bool enabled,
+    bool reset
+)
+{
+    config_.enablePerformanceProfiling =
+        enabled;
+
+    if (reset)
+    {
+        resetPerformanceStats();
+    }
+}
+
+bool AutoMemory::performanceProfilingEnabled() const
+{
+    return
+        config_.
+            enablePerformanceProfiling;
+}
+
 AutoMemoryPerformanceStats
 AutoMemory::performanceStats() const
 {
