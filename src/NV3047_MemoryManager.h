@@ -307,14 +307,18 @@ private:
     MemoryRegion scratch_region_;
 
     PressureCallback pressure_callback_;
-    MemoryPressure last_pressure_;
-    uint32_t last_monitor_ms_;
+
+    // These fields are single native-width values on ESP32-S3. They are read
+    // lock-free in the service fast path; mutations still occur in controlled
+    // manager operations.
+    volatile MemoryPressure last_pressure_;
+    volatile uint32_t last_monitor_ms_;
 
     mutable MemoryStats cached_stats_;
-    mutable bool cached_stats_valid_;
+    volatile bool cached_stats_valid_;
 
-    uint32_t heap_revision_;
-    uint32_t sampled_heap_revision_;
+    volatile uint32_t heap_revision_;
+    volatile uint32_t sampled_heap_revision_;
     uint32_t heap_sample_count_;
 
     void lock() const;
