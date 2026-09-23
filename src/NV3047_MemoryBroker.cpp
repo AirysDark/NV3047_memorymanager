@@ -2453,6 +2453,24 @@ bool MemoryBroker::validate() const
     return valid;
 }
 
+bool MemoryBroker::serviceDue(
+    uint32_t nowMs
+) const
+{
+    if (!isReady())
+    {
+        return false;
+    }
+
+    return
+        config_.serviceIntervalMs == 0 ||
+        static_cast<uint32_t>(
+            nowMs -
+            last_service_ms_
+        ) >=
+            config_.serviceIntervalMs;
+}
+
 void MemoryBroker::service()
 {
     if (!isReady())
@@ -2460,23 +2478,25 @@ void MemoryBroker::service()
         return;
     }
 
-    const uint32_t now =
-        millis();
+    service(
+        millis()
+    );
+}
 
+void MemoryBroker::service(
+    uint32_t nowMs
+)
+{
     if (
-        config_.serviceIntervalMs != 0 &&
-        static_cast<uint32_t>(
-            now -
-            last_service_ms_
-        ) <
-            config_.serviceIntervalMs
+        !isReady() ||
+        !serviceDue(nowMs)
     )
     {
         return;
     }
 
     last_service_ms_ =
-        now;
+        nowMs;
 
     // Activity decay is cheap and remains periodic.
     portENTER_CRITICAL(
@@ -2484,15 +2504,15 @@ void MemoryBroker::service()
     );
 
     refreshActivities(
-        now
+        nowMs
     );
 
     portEXIT_CRITICAL(
         &mux_
     );
 
-    // Pressure is a cached MemoryManager value in Overhaul V1. Check it
-    // before scanning client/lease tables so Normal pressure exits quickly.
+    // Pressure is cached by MemoryManager. Healthy memory exits before any
+    // donor/client/lease scans.
     const MemoryPressure pressure =
         manager_->pressure();
 
