@@ -137,19 +137,24 @@ void loop()
             AutoMemoryPerformanceStats perf =
                 memory.performanceStats();
 
-        const uint32_t avgFrameBoundaryUs =
-            perf.beginFrameCalls != 0
+        const NV3047Memory::
+            DriverTakeoverPerformanceStats bridge =
+                NV3047Memory::
+                    driverTakeoverPerformanceStats();
+
+        const uint32_t avgServiceUs =
+            perf.serviceFullPasses != 0
                 ? static_cast<uint32_t>(
-                      perf.totalBeginFrameUs /
-                      perf.beginFrameCalls
+                      perf.totalServiceUs /
+                      perf.serviceFullPasses
                   )
                 : 0;
 
-        const uint32_t avgServiceUs =
-            perf.serviceCalls != 0
+        const uint32_t avgProviderServiceUs =
+            bridge.providerServiceCalls != 0
                 ? static_cast<uint32_t>(
-                      perf.totalServiceUs /
-                      perf.serviceCalls
+                      bridge.totalProviderServiceUs /
+                      bridge.providerServiceCalls
                   )
                 : 0;
 
@@ -159,25 +164,70 @@ void loop()
         );
 
         Serial.print(
-            "beginFrame calls/avg/max us: "
+            "provider ready/front/draw/swap: "
         );
         Serial.print(
-            perf.beginFrameCalls
+            bridge.providerReadyCalls
         );
         Serial.print('/');
         Serial.print(
-            avgFrameBoundaryUs
+            bridge.providerFrontCalls
+        );
+        Serial.print('/');
+        Serial.print(
+            bridge.providerDrawCalls
         );
         Serial.print('/');
         Serial.println(
-            perf.maxBeginFrameUs
+            bridge.providerSwapCalls
         );
 
         Serial.print(
-            "service calls/avg/max us: "
+            "provider beginFrame calls/reset/no-op: "
         );
         Serial.print(
-            perf.serviceCalls
+            bridge.providerBeginFrameCalls
+        );
+        Serial.print('/');
+        Serial.print(
+            bridge.providerBeginFrameResets
+        );
+        Serial.print('/');
+        Serial.println(
+            bridge.providerBeginFrameNoOps
+        );
+
+        Serial.print(
+            "provider service calls/full/fast-exit: "
+        );
+        Serial.print(
+            bridge.providerServiceCalls
+        );
+        Serial.print('/');
+        Serial.print(
+            bridge.providerServiceFullPasses
+        );
+        Serial.print('/');
+        Serial.println(
+            bridge.providerServiceFastExits
+        );
+
+        Serial.print(
+            "provider service avg/max us: "
+        );
+        Serial.print(
+            avgProviderServiceUs
+        );
+        Serial.print('/');
+        Serial.println(
+            bridge.maxProviderServiceUs
+        );
+
+        Serial.print(
+            "AutoMemory service full passes/avg/max us: "
+        );
+        Serial.print(
+            perf.serviceFullPasses
         );
         Serial.print('/');
         Serial.print(
@@ -204,10 +254,25 @@ void loop()
         );
 
         Serial.print(
-            "broker usage syncs: "
+            "broker service due/skipped: "
         );
+        Serial.print(
+            perf.brokerServiceDuePasses
+        );
+        Serial.print('/');
         Serial.println(
+            perf.brokerServiceSkipped
+        );
+
+        Serial.print(
+            "broker usage sync/update skips: "
+        );
+        Serial.print(
             perf.brokerUsageSyncs
+        );
+        Serial.print('/');
+        Serial.println(
+            perf.brokerUsageSyncSkips
         );
 
         Serial.print(
@@ -215,6 +280,24 @@ void loop()
         );
         Serial.println(
             perf.assetUsageSyncs
+        );
+
+        Serial.print(
+            "pressure policy actions: "
+        );
+        Serial.println(
+            perf.pressurePolicyActions
+        );
+
+        Serial.print(
+            "provider DMA acquire/release: "
+        );
+        Serial.print(
+            bridge.providerDMAAcquireCalls
+        );
+        Serial.print('/');
+        Serial.println(
+            bridge.providerDMAReleaseCalls
         );
 
         memory.resetPerformanceStats();
