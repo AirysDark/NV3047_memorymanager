@@ -275,9 +275,23 @@ public:
 
     bool validate() const;
 
-    bool serviceDue(
+    inline bool serviceDue(
         uint32_t nowMs
-    ) const;
+    ) const
+    {
+        if (!ready_)
+        {
+            return false;
+        }
+
+        return
+            config_.serviceIntervalMs == 0 ||
+            static_cast<uint32_t>(
+                nowMs -
+                last_service_ms_
+            ) >=
+                config_.serviceIntervalMs;
+    }
 
     void service();
     void service(uint32_t nowMs);
