@@ -401,9 +401,17 @@ void providerBeginFrame()
             providerBeginFrameCalls;
     }
 
-    const bool reset =
+    bool reset = false;
+
+    if (
         session.manager->
-            beginFrameIfNeeded();
+            scratchWasUsed()
+    )
+    {
+        reset =
+            session.manager->
+                beginFrameIfNeeded();
+    }
 
     if (profile)
     {
