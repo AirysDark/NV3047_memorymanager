@@ -121,6 +121,10 @@ private:
 
     bool makeRoom(size_t bytes);
     void touch(Entry& entry);
+
+    void accountAdd(const Entry& entry);
+    void accountRemove(const Entry& entry);
+    void noteUsageChange();
 };
 
 } // namespace NV3047Memory
