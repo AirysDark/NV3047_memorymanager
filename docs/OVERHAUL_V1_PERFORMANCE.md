@@ -129,6 +129,14 @@ Therefore `providerBeginFrame()` and `providerService()` no longer take the oute
 
 Internal MemoryManager and MemoryBroker synchronization remains intact.
 
+### 8. Dedicated frame-scratch synchronization
+
+`beginFrame()` only resets the preallocated scratch offset. Overhaul V1 no longer takes the global allocation-table semaphore for this operation.
+
+Scratch offset allocation, rewind and reset now use a dedicated short ESP32 critical section. Allocation-table ownership and heap bookkeeping keep their existing manager mutex.
+
+Deep validation samples scratch state through the same scratch critical section.
+
 ## Central configuration
 
 Normal defaults are now centralized in:
