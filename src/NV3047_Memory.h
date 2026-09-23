@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NV3047_MemoryConfig.h"
 #include "NV3047_MemoryManager.h"
 #include "NV3047_MemoryBroker.h"
 #include "NV3047_ElasticBuffer.h"
