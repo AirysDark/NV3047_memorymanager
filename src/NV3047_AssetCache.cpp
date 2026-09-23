@@ -1055,11 +1055,6 @@ AssetCache::Stats AssetCache::stats() const
     return result;
 }
 
-uint32_t AssetCache::usageRevision() const
-{
-    return usage_revision_;
-}
-
 bool AssetCache::validate() const
 {
     if (
