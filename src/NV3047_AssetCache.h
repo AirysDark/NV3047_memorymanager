@@ -77,7 +77,12 @@ public:
     // O(1) snapshot. Accounting is maintained when entries change instead
     // of rescanning the cache on every broker service pass.
     Stats stats() const;
-    uint32_t usageRevision() const;
+
+    inline uint32_t usageRevision() const
+    {
+        return usage_revision_;
+    }
+
     bool validate() const;
 
 private:
