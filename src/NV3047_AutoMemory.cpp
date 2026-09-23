@@ -1,4 +1,5 @@
 #include "NV3047_AutoMemory.h"
+#include "NV3047_DriverTakeover.h"
 
 namespace NV3047Memory
 {
@@ -1229,6 +1230,10 @@ void AutoMemory::setPerformanceProfiling(
     config_.enablePerformanceProfiling =
         enabled;
 
+    nv3047_memorymanager_takeover_profiling_changed(
+        enabled
+    );
+
     if (reset)
     {
         resetPerformanceStats();
@@ -1252,6 +1257,8 @@ void AutoMemory::resetPerformanceStats()
 {
     performance_stats_ =
         AutoMemoryPerformanceStats();
+
+    resetDriverTakeoverPerformanceStats();
 }
 
 void AutoMemory::dump(
