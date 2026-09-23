@@ -312,8 +312,9 @@ private:
 
     mutable MemoryStats cached_stats_;
     mutable bool cached_stats_valid_;
-    mutable bool heap_stats_dirty_;
 
+    uint32_t heap_revision_;
+    uint32_t sampled_heap_revision_;
     uint32_t heap_sample_count_;
 
     void lock() const;
