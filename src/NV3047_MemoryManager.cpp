@@ -1702,13 +1702,6 @@ size_t MemoryManager::scratchUsed() const
     return value;
 }
 
-bool MemoryManager::scratchWasUsed() const
-{
-    return
-        ready_ &&
-        scratch_touched_;
-}
-
 HeapStats MemoryManager::readHeap(
     uint32_t caps
 ) const
@@ -1829,17 +1822,6 @@ MemoryStats MemoryManager::cachedStats() const
     return sampleStats();
 }
 
-MemoryPressure MemoryManager::pressure() const
-{
-    if (!ready_)
-    {
-        return
-            MemoryPressure::Critical;
-    }
-
-    return last_pressure_;
-}
-
 void MemoryManager::markHeapStatsDirty()
 {
     if (!ready_)
@@ -1869,33 +1851,6 @@ bool MemoryManager::refreshStats(
             millis(),
             force
         );
-}
-
-bool MemoryManager::serviceDue(
-    uint32_t nowMs
-) const
-{
-    if (!ready_)
-    {
-        return false;
-    }
-
-    if (
-        !cached_stats_valid_ ||
-        heap_revision_ !=
-            sampled_heap_revision_
-    )
-    {
-        return true;
-    }
-
-    return
-        config_.monitorIntervalMs == 0 ||
-        static_cast<uint32_t>(
-            nowMs -
-            last_monitor_ms_
-        ) >=
-            config_.monitorIntervalMs;
 }
 
 bool MemoryManager::refreshStatsAt(
