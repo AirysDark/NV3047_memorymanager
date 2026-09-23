@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "NV3047_MemoryConfig.h"
 
 namespace NV3047Memory
 {
@@ -67,39 +68,39 @@ struct MemoryStats
 struct MemoryConfig
 {
     // General allocations at or above this size prefer PSRAM.
-    size_t largeAllocationThreshold = 4096;
+    size_t largeAllocationThreshold = Defaults::LARGE_ALLOCATION_THRESHOLD;
 
     // RAM kept free so display/UI allocations do not starve the runtime.
-    size_t internalReserveBytes = 48 * 1024;
-    size_t psramReserveBytes = 128 * 1024;
+    size_t internalReserveBytes = Defaults::INTERNAL_RESERVE_BYTES;
+    size_t psramReserveBytes = Defaults::PSRAM_RESERVE_BYTES;
 
     // Pressure thresholds.
-    size_t warningInternalFreeBytes = 64 * 1024;
-    size_t criticalInternalFreeBytes = 32 * 1024;
-    size_t warningPSRAMFreeBytes = 256 * 1024;
-    size_t criticalPSRAMFreeBytes = 128 * 1024;
+    size_t warningInternalFreeBytes = Defaults::WARNING_INTERNAL_FREE_BYTES;
+    size_t criticalInternalFreeBytes = Defaults::CRITICAL_INTERNAL_FREE_BYTES;
+    size_t warningPSRAMFreeBytes = Defaults::WARNING_PSRAM_FREE_BYTES;
+    size_t criticalPSRAMFreeBytes = Defaults::CRITICAL_PSRAM_FREE_BYTES;
 
     // Reusable temporary per-frame arena.
-    size_t scratchBytes = 64 * 1024;
+    size_t scratchBytes = Defaults::SCRATCH_BYTES;
 
-    bool preferPSRAM = true;
-    bool allowFallback = true;
+    bool preferPSRAM = Defaults::PREFER_PSRAM;
+    bool allowFallback = Defaults::ALLOW_FALLBACK;
 
     // Keep optional graphics/scratch work from consuming internal RAM when
     // PSRAM is present but under pressure or fragmented.
-    bool allowBitmapFallback = false;
-    bool allowScratchFallback = false;
+    bool allowBitmapFallback = Defaults::ALLOW_BITMAP_FALLBACK;
+    bool allowScratchFallback = Defaults::ALLOW_SCRATCH_FALLBACK;
 
     // NV3047 driver_overhaul_v2 requires framebuffer storage in PSRAM.
     // Disable only for hardware that intentionally supports internal-RAM frames.
-    bool requirePSRAMForFramebuffer = true;
+    bool requirePSRAMForFramebuffer = Defaults::REQUIRE_PSRAM_FRAMEBUFFER;
 
     // Ownership bookkeeping and tags are always retained for safe cleanup.
     // This flag controls verbose per-allocation listing in dump().
-    bool enableTracking = true;
+    bool enableTracking = Defaults::ENABLE_TRACKING_DUMP;
 
     // service() monitoring cadence.
-    uint32_t monitorIntervalMs = 1000;
+    uint32_t monitorIntervalMs = Defaults::MEMORY_MONITOR_INTERVAL_MS;
 };
 
 using PressureCallback =
