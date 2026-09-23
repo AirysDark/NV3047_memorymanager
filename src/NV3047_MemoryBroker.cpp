@@ -2487,10 +2487,7 @@ void MemoryBroker::service(
     uint32_t nowMs
 )
 {
-    if (
-        !isReady() ||
-        !serviceDue(nowMs)
-    )
+    if (!serviceDue(nowMs))
     {
         return;
     }
