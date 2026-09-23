@@ -243,18 +243,12 @@ void providerBeginFrame() {
         return;
     }
 
-    if (!nv3047_memorymanager_autoruntime_lock()) {
-        return;
-    }
-
-    // A display swap defines scratch lifetime, but it does not by itself mean
-    // the UI is a heavy workload. Real UI-owned broker allocations/touches
-    // raise activity automatically; future UI integration can also report
-    // genuine input/activity internally without sketch-side calls.
+    // Once bridge_active is true the automatic background task deliberately
+    // does not run full AutoMemory::service(). MemoryManager::beginFrame()
+    // already protects its own scratch state, so an outer runtime semaphore
+    // would add two unnecessary FreeRTOS operations per frame.
     NV3047Memory::AutoMemory::instance().
         beginFrame();
-
-    nv3047_memorymanager_autoruntime_unlock();
 }
 
 void providerService() {
@@ -262,14 +256,10 @@ void providerService() {
         return;
     }
 
-    if (!nv3047_memorymanager_autoruntime_lock()) {
-        return;
-    }
-
+    // The bridge owns the presentation/service cadence while active. Internal
+    // manager/broker synchronization remains in their own layers.
     NV3047Memory::AutoMemory::instance().
         service();
-
-    nv3047_memorymanager_autoruntime_unlock();
 }
 
 void* providerAcquireDMA(
