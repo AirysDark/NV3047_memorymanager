@@ -14,38 +14,38 @@ struct AutoMemoryConfig
     MemoryConfig memory;
     BrokerConfig broker;
 
-    bool enableBroker = true;
+    bool enableBroker = Defaults::BROKER_ENABLED;
 
     // Soft budgets are elastic guidance, not fixed partitions.
-    size_t uiSoftBudgetBytes = 512 * 1024;
-    size_t applicationSoftBudgetBytes = 512 * 1024;
+    size_t uiSoftBudgetBytes = Defaults::UI_SOFT_BUDGET_BYTES;
+    size_t applicationSoftBudgetBytes = Defaults::APPLICATION_SOFT_BUDGET_BYTES;
 
-    bool allocateFramebufferPair = true;
+    bool allocateFramebufferPair = Defaults::ALLOCATE_FRAMEBUFFER_PAIR;
 
     // Matches driver_overhaul_v2 production defaults.
-    uint16_t framebufferWidth = 480;
-    uint16_t framebufferHeight = 272;
+    uint16_t framebufferWidth = Defaults::FRAMEBUFFER_WIDTH;
+    uint16_t framebufferHeight = Defaults::FRAMEBUFFER_HEIGHT;
 
-    bool enableDMAPool = true;
+    bool enableDMAPool = Defaults::ENABLE_DMA_POOL;
 
     // driver_overhaul_v2 uses one persistent 10-line RGB565
     // DMA-capable fill buffer: 480 * 10 * 2 = 9600 bytes.
-    size_t dmaBlockBytes = 480 * 10 * sizeof(uint16_t);
-    uint8_t dmaBlockCount = 1;
-    size_t dmaAlignment = 4;
+    size_t dmaBlockBytes = Defaults::DMA_BLOCK_BYTES;
+    uint8_t dmaBlockCount = Defaults::DMA_BLOCK_COUNT;
+    size_t dmaAlignment = Defaults::DMA_ALIGNMENT;
 
     // 0 means no hard cache byte budget.
     size_t assetCacheBudgetBytes =
-        512 * 1024;
+        Defaults::ASSET_CACHE_BUDGET_BYTES;
 
     // Automatic pressure actions.
-    uint8_t warningCachePercent = 75;
-    bool purgeUnpinnedOnCritical = true;
-    bool resetScratchOnCritical = true;
+    uint8_t warningCachePercent = Defaults::WARNING_CACHE_PERCENT;
+    bool purgeUnpinnedOnCritical = Defaults::PURGE_UNPINNED_ON_CRITICAL;
+    bool resetScratchOnCritical = Defaults::RESET_SCRATCH_ON_CRITICAL;
 
     // Disabled by default so profiling itself has zero micros() overhead in
     // production. Enable only while measuring the manager hot path.
-    bool enablePerformanceProfiling = false;
+    bool enablePerformanceProfiling = Defaults::ENABLE_PERFORMANCE_PROFILING;
 };
 
 struct AutoMemoryPerformanceStats
