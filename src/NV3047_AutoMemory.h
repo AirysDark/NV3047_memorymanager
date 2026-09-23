@@ -102,9 +102,38 @@ public:
     void beginFrame();
     bool beginFrameIfNeeded();
 
-    bool serviceDue(
+    inline bool serviceDue(
         uint32_t nowMs
-    ) const;
+    ) const
+    {
+        if (!ready_)
+        {
+            return false;
+        }
+
+        if (
+            !driver_usage_synced_ ||
+            assets_.usageRevision() !=
+                synced_asset_revision_ ||
+            manager_->pressure() !=
+                last_pressure_
+        )
+        {
+            return true;
+        }
+
+        if (
+            manager_->
+                serviceDue(nowMs)
+        )
+        {
+            return true;
+        }
+
+        return
+            broker_.
+                serviceDue(nowMs);
+    }
 
     void service();
     void service(uint32_t nowMs);
