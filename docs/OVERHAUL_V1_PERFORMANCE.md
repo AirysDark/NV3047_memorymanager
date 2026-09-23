@@ -137,6 +137,99 @@ Scratch offset allocation, rewind and reset now use a dedicated short ESP32 crit
 
 Deep validation samples scratch state through the same scratch critical section.
 
+### 9. Trusted takeover session
+
+Provider startup now validates the complete memory configuration once and caches stable references to:
+
+- AutoMemory
+- FramebufferPair
+- MemoryManager
+- DMAPool
+
+The session-ready flag is published only after validation succeeds and is cleared before teardown begins.
+
+Normal provider callbacks no longer reconstruct readiness through the manager hierarchy.
+
+### 10. Trusted framebuffer access
+
+FramebufferPair keeps its checked public API, but the established takeover session uses inline trusted accessors for:
+
+- front buffer
+- draw/back buffer
+- role swap
+
+These helpers perform no ownership/readiness scans and are valid only while the takeover session is ready.
+
+### 11. Provider service gate
+
+The driver still calls the provider service callback after successful presentation, preserving the ABI and frame-boundary contract.
+
+The bridge now checks one shared timestamp against:
+
+- dirty heap revision
+- asset accounting revision
+- cached pressure transition
+- memory-monitor deadline
+- broker-service deadline
+
+If nothing is pending or due, provider service returns before entering AutoMemory service.
+
+### 12. Event/deadline-driven maintenance
+
+Memory maintenance is now driven by state changes and deadlines rather than frame rate.
+
+A healthy frame with no memory changes normally performs:
+
+```text
+swap framebuffer role
+scratch used? no -> skip reset
+maintenance due? no -> return
+draw pointer -> direct trusted session access
+```
+
+Heap and broker work still runs immediately when allocation/accounting state changes, and periodically at the configured 1000 ms / 500 ms deadlines.
+
+### 13. Shared service timestamp
+
+Provider service reads `millis()` once when checking maintenance.
+
+That same timestamp is passed to AutoMemory, MemoryManager and MemoryBroker for the maintenance pass. The lower layers no longer each need a separate frame-time clock read.
+
+### 14. Conditional post-policy synchronization
+
+Broker usage is synchronized before broker service only when driver or asset accounting revisions require it.
+
+A second synchronization happens only if broker reclaim or fallback pressure policy actually changes the asset accounting revision.
+
+Normal stable frames do not enter broker synchronization.
+
+### 15. Scratch no-op fast path
+
+Successful scratch allocation sets a touched flag.
+
+At the next frame boundary:
+
+- untouched scratch -> return without entering the scratch critical section
+- touched scratch -> reset offset and clear touched state
+
+Rewinding scratch back to offset zero also clears the touched state.
+
+### 16. Expanded profiling
+
+Profiling now counts both callback entries and real work:
+
+- provider ready/front/draw/swap calls
+- provider begin-frame reset/no-op counts
+- provider service full/fast-exit counts
+- provider service timing
+- broker service due/skipped counts
+- broker usage update/skip counts
+- heap samples
+- pressure-policy actions
+- DMA acquire/release calls
+
+This is more useful than timing ultra-small callbacks whose individual duration may fall below `micros()` resolution.
+
 ## Central configuration
 
 Normal defaults are now centralized in:
@@ -172,17 +265,24 @@ It uses normal include-only takeover and then enables profiler timing.
 The important outputs are:
 
 ```text
-beginFrame calls/avg/max us
-service calls/avg/max us
+provider ready/front/draw/swap
+provider beginFrame calls/reset/no-op
+provider service calls/full/fast-exit
+provider service avg/max us
+AutoMemory service full passes/avg/max us
 heap sample passes
-manager heap samples total
-broker usage syncs
+broker service due/skipped
+broker usage sync/update skips
 asset usage syncs
+pressure policy actions
+provider DMA acquire/release
 ```
 
 For a healthy steady workload, expected behavior is:
 
-- service is called every presented frame because the driver contract remains unchanged
+- provider service callbacks still occur at frame boundaries because the ABI remains unchanged
+- most provider service callbacks fast-exit before AutoMemory
+- begin-frame is normally a no-op when the render workload did not use scratch
 - heap samples occur far less frequently than frames
 - fixed driver usage is not repeatedly republished
 - asset usage sync count remains near zero when the cache does not change
@@ -217,3 +317,10 @@ Compare:
 - profiler average/max service microseconds
 
 Do not modify touch or colour while evaluating performance.
+
+
+## Deferred experiments
+
+Overhaul V1 intentionally does **not** force O2/O3, broad `always_inline`, or IRAM placement at this stage.
+
+Tiny session/framebuffer accessors are already inline where their fixed-state nature is clear. More aggressive compiler attributes will only be tested after the physical ESP32-S3 benchmark identifies a remaining measurable hotspot, because larger forced code can increase I-cache/flash pressure under Arduino-ESP32 Core 2.0.17.
