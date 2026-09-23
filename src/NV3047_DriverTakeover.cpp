@@ -602,6 +602,15 @@ nv3047_memorymanager_takeover_profiling_changed(
         sessionReady();
 }
 
+extern "C" void
+nv3047_memorymanager_takeover_auto_memory_ending()
+{
+    if (sessionReady())
+    {
+        clearSessionRuntime();
+    }
+}
+
 namespace NV3047Memory
 {
 
