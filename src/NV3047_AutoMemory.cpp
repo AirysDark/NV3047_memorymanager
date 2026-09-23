@@ -329,7 +329,6 @@ bool AutoMemory::serviceDue(
     }
 
     return
-        broker_.isReady() &&
         broker_.serviceDue(nowMs);
 }
 
@@ -420,26 +419,26 @@ void AutoMemory::service(
     // This is revision-gated before any broker lock/stat work.
     syncBrokerUsage(false);
 
-    if (broker_.isReady())
+    if (
+        broker_.
+            serviceDue(nowMs)
+    )
     {
-        if (
-            broker_.
-                serviceDue(nowMs)
-        )
-        {
-            if (profile)
-            {
-                ++performance_stats_.
-                    brokerServiceDuePasses;
-            }
-
-            broker_.service(nowMs);
-        }
-        else if (profile)
+        if (profile)
         {
             ++performance_stats_.
-                brokerServiceSkipped;
+                brokerServiceDuePasses;
         }
+
+        broker_.service(nowMs);
+    }
+    else if (
+        profile &&
+        broker_.isReady()
+    )
+    {
+        ++performance_stats_.
+            brokerServiceSkipped;
     }
 
     const MemoryPressure current =
