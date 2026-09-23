@@ -301,6 +301,8 @@ private:
     uint32_t successful_allocations_;
     uint32_t failed_allocations_;
 
+    mutable portMUX_TYPE scratch_mux_;
+
     uint8_t* scratch_base_;
     size_t scratch_capacity_;
     size_t scratch_offset_;
