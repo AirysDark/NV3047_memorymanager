@@ -9,6 +9,11 @@ AssetCache::AssetCache()
       budget_bytes_(0),
       used_bytes_(0),
       peak_bytes_(0),
+      pinned_bytes_(0),
+      reclaimable_bytes_(0),
+      entry_count_(0),
+      pinned_count_(0),
+      usage_revision_(0),
       hits_(0),
       misses_(0),
       evictions_(0),
@@ -57,6 +62,11 @@ void AssetCache::end()
     budget_bytes_ = 0;
     used_bytes_ = 0;
     peak_bytes_ = 0;
+    pinned_bytes_ = 0;
+    reclaimable_bytes_ = 0;
+    entry_count_ = 0;
+    pinned_count_ = 0;
+    usage_revision_ = 0;
     hits_ = 0;
     misses_ = 0;
     evictions_ = 0;
@@ -174,6 +184,152 @@ void AssetCache::touch(
         use_counter_;
 }
 
+void AssetCache::noteUsageChange()
+{
+    ++usage_revision_;
+
+    if (usage_revision_ == 0)
+    {
+        usage_revision_ = 1;
+    }
+}
+
+void AssetCache::accountAdd(
+    const Entry& entry
+)
+{
+    if (!entry.used)
+    {
+        return;
+    }
+
+    used_bytes_ +=
+        entry.bytes;
+
+    ++entry_count_;
+
+    if (entry.pinned)
+    {
+        pinned_bytes_ +=
+            entry.bytes;
+
+        ++pinned_count_;
+    }
+    else
+    {
+        reclaimable_bytes_ +=
+            entry.bytes;
+    }
+
+    if (
+        used_bytes_ >
+        peak_bytes_
+    )
+    {
+        peak_bytes_ =
+            used_bytes_;
+    }
+
+    noteUsageChange();
+}
+
+void AssetCache::accountRemove(
+    const Entry& entry
+)
+{
+    if (!entry.used)
+    {
+        return;
+    }
+
+    used_bytes_ =
+        used_bytes_ >=
+                entry.bytes
+            ? used_bytes_ -
+                entry.bytes
+            : 0;
+
+    if (entry_count_ > 0)
+    {
+        --entry_count_;
+    }
+
+    if (entry.pinned)
+    {
+        pinned_bytes_ =
+            pinned_bytes_ >=
+                    entry.bytes
+                ? pinned_bytes_ -
+                    entry.bytes
+                : 0;
+
+        if (pinned_count_ > 0)
+        {
+            --pinned_count_;
+        }
+    }
+    else
+    {
+        reclaimable_bytes_ =
+            reclaimable_bytes_ >=
+                    entry.bytes
+                ? reclaimable_bytes_ -
+                    entry.bytes
+                : 0;
+    }
+
+    noteUsageChange();
+}
+
+void AssetCache::accountPinChange(
+    Entry& entry,
+    bool pinned
+)
+{
+    if (
+        !entry.used ||
+        entry.pinned == pinned
+    )
+    {
+        return;
+    }
+
+    if (pinned)
+    {
+        reclaimable_bytes_ =
+            reclaimable_bytes_ >=
+                    entry.bytes
+                ? reclaimable_bytes_ -
+                    entry.bytes
+                : 0;
+
+        pinned_bytes_ +=
+            entry.bytes;
+
+        ++pinned_count_;
+    }
+    else
+    {
+        pinned_bytes_ =
+            pinned_bytes_ >=
+                    entry.bytes
+                ? pinned_bytes_ -
+                    entry.bytes
+                : 0;
+
+        if (pinned_count_ > 0)
+        {
+            --pinned_count_;
+        }
+
+        reclaimable_bytes_ +=
+            entry.bytes;
+    }
+
+    entry.pinned = pinned;
+    noteUsageChange();
+}
+
 bool AssetCache::makeRoom(
     size_t bytes
 )
@@ -254,18 +410,9 @@ void* AssetCache::put(
         )
     )
     {
-        if (
-            used_bytes_ >=
-            entries_[existing].bytes
-        )
-        {
-            used_bytes_ -=
-                entries_[existing].bytes;
-        }
-        else
-        {
-            used_bytes_ = 0;
-        }
+        accountRemove(
+            entries_[existing]
+        );
 
         memset(
             &entries_[existing],
@@ -292,7 +439,11 @@ void* AssetCache::put(
                 );
             }
 
-            entry.pinned = pinned;
+            accountPinChange(
+                entry,
+                pinned
+            );
+
             touch(entry);
 
             return entry.pointer;
@@ -416,25 +567,13 @@ void* AssetCache::put(
         void* oldPointer =
             entry.pointer;
 
-        const size_t oldBytes =
-            entry.bytes;
-
         manager_->release(
             oldPointer
         );
 
-        if (
-            used_bytes_ >=
-            oldBytes
-        )
-        {
-            used_bytes_ -=
-                oldBytes;
-        }
-        else
-        {
-            used_bytes_ = 0;
-        }
+        accountRemove(
+            entry
+        );
 
         entry.pointer =
             replacement;
@@ -444,17 +583,7 @@ void* AssetCache::put(
         entry.used = true;
 
         touch(entry);
-
-        used_bytes_ += bytes;
-
-        if (
-            used_bytes_ >
-            peak_bytes_
-        )
-        {
-            peak_bytes_ =
-                used_bytes_;
-        }
+        accountAdd(entry);
 
         return replacement;
     }
@@ -535,17 +664,7 @@ void* AssetCache::put(
     entry.pinned = pinned;
 
     touch(entry);
-
-    used_bytes_ += bytes;
-
-    if (
-        used_bytes_ >
-        peak_bytes_
-    )
-    {
-        peak_bytes_ =
-            used_bytes_;
-    }
+    accountAdd(entry);
 
     return pointer;
 }
@@ -659,7 +778,11 @@ bool AssetCache::pin(
         return false;
     }
 
-    entries_[index].pinned = true;
+    accountPinChange(
+        entries_[index],
+        true
+    );
+
     touch(entries_[index]);
 
     return true;
@@ -684,7 +807,11 @@ bool AssetCache::unpin(
         return false;
     }
 
-    entries_[index].pinned = false;
+    accountPinChange(
+        entries_[index],
+        false
+    );
+
     touch(entries_[index]);
 
     return true;
@@ -715,18 +842,7 @@ bool AssetCache::remove(
         );
     }
 
-    if (
-        used_bytes_ >=
-        entry.bytes
-    )
-    {
-        used_bytes_ -=
-            entry.bytes;
-    }
-    else
-    {
-        used_bytes_ = 0;
-    }
+    accountRemove(entry);
 
     memset(
         &entry,
@@ -813,7 +929,20 @@ void AssetCache::clear()
             sizeof(entries_)
         );
 
+        const bool hadEntries =
+            entry_count_ != 0;
+
         used_bytes_ = 0;
+        pinned_bytes_ = 0;
+        reclaimable_bytes_ = 0;
+        entry_count_ = 0;
+        pinned_count_ = 0;
+
+        if (hadEntries)
+        {
+            noteUsageChange();
+        }
+
         return;
     }
 
@@ -832,6 +961,10 @@ void AssetCache::clear()
                 );
             }
 
+            accountRemove(
+                entries_[i]
+            );
+
             memset(
                 &entries_[i],
                 0,
@@ -839,8 +972,6 @@ void AssetCache::clear()
             );
         }
     }
-
-    used_bytes_ = 0;
 }
 
 void AssetCache::trimToBytes(
@@ -912,39 +1043,30 @@ AssetCache::Stats AssetCache::stats() const
     result.budgetBytes =
         budget_bytes_;
 
+    result.pinnedBytes =
+        pinned_bytes_;
+
+    result.reclaimableBytes =
+        reclaimable_bytes_;
+
+    result.entryCount =
+        entry_count_;
+
+    result.pinnedCount =
+        pinned_count_;
+
     result.hits = hits_;
     result.misses = misses_;
     result.evictions =
         evictions_;
 
-    for (
-        uint8_t i = 0;
-        i < MAX_ENTRIES;
-        ++i
-    )
-    {
-        if (entries_[i].used)
-        {
-            ++result.entryCount;
-
-            if (entries_[i].pinned)
-            {
-                ++result.pinnedCount;
-
-                result.pinnedBytes +=
-                    entries_[i].bytes;
-            }
-            else
-            {
-                result.reclaimableBytes +=
-                    entries_[i].bytes;
-            }
-        }
-    }
-
     return result;
 }
 
+uint32_t AssetCache::usageRevision() const
+{
+    return usage_revision_;
+}
 
 bool AssetCache::validate() const
 {
@@ -957,7 +1079,10 @@ bool AssetCache::validate() const
     }
 
     size_t bytes = 0;
+    size_t pinnedBytes = 0;
+    size_t reclaimableBytes = 0;
     uint8_t count = 0;
+    uint8_t pinnedCount = 0;
 
     for (
         uint8_t i = 0;
@@ -998,10 +1123,29 @@ bool AssetCache::validate() const
 
         bytes += entry.bytes;
         ++count;
+
+        if (entry.pinned)
+        {
+            pinnedBytes +=
+                entry.bytes;
+            ++pinnedCount;
+        }
+        else
+        {
+            reclaimableBytes +=
+                entry.bytes;
+        }
     }
 
     return
         bytes == used_bytes_ &&
+        pinnedBytes ==
+            pinned_bytes_ &&
+        reclaimableBytes ==
+            reclaimable_bytes_ &&
+        count == entry_count_ &&
+        pinnedCount ==
+            pinned_count_ &&
         count <= MAX_ENTRIES &&
         (
             budget_bytes_ == 0 ||
