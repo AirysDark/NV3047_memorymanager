@@ -75,23 +75,29 @@ struct BrokerClientConfig
 
 struct BrokerConfig
 {
-    bool enabled = true;
+    bool enabled = Defaults::BROKER_ENABLED;
 
     // 0 = calculate exact table requirement and reserve requirement +
     // permanentHeadroomBytes, rounded to 1 KiB.
-    size_t permanentArenaBytes = 0;
+    size_t permanentArenaBytes =
+        Defaults::BROKER_PERMANENT_ARENA_BYTES;
 
     // Small permanent expansion margin for future broker bookkeeping.
-    size_t permanentHeadroomBytes = 2 * 1024;
+    size_t permanentHeadroomBytes =
+        Defaults::BROKER_PERMANENT_HEADROOM_BYTES;
 
-    uint32_t serviceIntervalMs = 500;
+    uint32_t serviceIntervalMs =
+        Defaults::BROKER_SERVICE_INTERVAL_MS;
 
     // Avoid asking a donor to perform tiny low-value evictions.
-    size_t minimumReclaimBytes = 4 * 1024;
+    size_t minimumReclaimBytes =
+        Defaults::BROKER_MINIMUM_RECLAIM_BYTES;
 
     // Portion of currently reclaimable client memory targeted per service pass.
-    uint8_t warningReclaimPercent = 25;
-    uint8_t criticalReclaimPercent = 100;
+    uint8_t warningReclaimPercent =
+        Defaults::BROKER_WARNING_RECLAIM_PERCENT;
+    uint8_t criticalReclaimPercent =
+        Defaults::BROKER_CRITICAL_RECLAIM_PERCENT;
 };
 
 struct BrokerClientStats
