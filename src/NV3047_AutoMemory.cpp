@@ -178,6 +178,10 @@ bool AutoMemory::begin(
 
 void AutoMemory::end()
 {
+    // Safety is enforced at the lifecycle transition rather than by
+    // revalidating the provider hierarchy on every frame callback.
+    nv3047_memorymanager_takeover_auto_memory_ending();
+
     ready_ = false;
 
     if (broker_.isReady())
