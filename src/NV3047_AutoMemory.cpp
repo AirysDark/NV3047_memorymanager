@@ -152,6 +152,11 @@ bool AutoMemory::begin(
 
     syncBrokerUsage(true);
 
+    // Manager startup is sampled before broker/framebuffer/DMA allocations.
+    // Refresh once after the complete automatic layout is established so the
+    // cached pressure state represents the real takeover footprint.
+    manager_->refreshStats(true);
+
     const MemoryPressure initialPressure =
         manager_->pressure();
 
