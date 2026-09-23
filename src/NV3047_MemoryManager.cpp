@@ -1718,8 +1718,13 @@ MemoryStats MemoryManager::cachedStats() const
 
 MemoryPressure MemoryManager::pressure() const
 {
-    return
-        cachedStats().pressure;
+    if (!ready_)
+    {
+        return
+            MemoryPressure::Critical;
+    }
+
+    return last_pressure_;
 }
 
 void MemoryManager::markHeapStatsDirty()
@@ -1754,45 +1759,33 @@ bool MemoryManager::refreshStats(
     const uint32_t now =
         millis();
 
-    uint32_t revisionBefore = 0;
-    uint32_t sampledRevision = 0;
-    bool valid = false;
-
-    lock();
-
-    revisionBefore =
+    // Fast path: these are native-width values on ESP32-S3. A concurrent
+    // change can at worst defer monitoring to the next service call; it
+    // cannot affect allocation ownership or safety.
+    const uint32_t revisionBefore =
         heap_revision_;
 
-    sampledRevision =
-        sampled_heap_revision_;
-
-    valid =
+    const bool valid =
         cached_stats_valid_;
-
-    const uint32_t age =
-        static_cast<uint32_t>(
-            now -
-            last_monitor_ms_
-        );
-
-    const bool intervalDue =
-        config_.monitorIntervalMs == 0 ||
-        age >=
-            config_.monitorIntervalMs;
 
     const bool dirty =
         revisionBefore !=
-            sampledRevision;
+            sampled_heap_revision_;
 
-    const bool shouldSample =
-        force ||
-        !valid ||
-        dirty ||
-        intervalDue;
+    const bool intervalDue =
+        config_.monitorIntervalMs == 0 ||
+        static_cast<uint32_t>(
+            now -
+            last_monitor_ms_
+        ) >=
+            config_.monitorIntervalMs;
 
-    unlock();
-
-    if (!shouldSample)
+    if (
+        !force &&
+        valid &&
+        !dirty &&
+        !intervalDue
+    )
     {
         return false;
     }
@@ -1807,19 +1800,19 @@ bool MemoryManager::refreshStats(
 
     lock();
 
-    // If an allocation/release raced with the heap query, preserve the dirty
-    // revision so the next service pass samples again.
-    const uint32_t revisionAfter =
-        heap_revision_;
-
     cached_stats_ =
         fresh;
 
     cached_stats_valid_ = true;
+
+    // Only claim the revision we actually sampled. If another allocation or
+    // release occurred during sampleStats(), heap_revision_ will differ and
+    // the next service call will immediately sample again.
     sampled_heap_revision_ =
         revisionBefore;
 
     ++heap_sample_count_;
+
     last_monitor_ms_ =
         now;
 
@@ -1835,10 +1828,6 @@ bool MemoryManager::refreshStats(
         callback =
             pressure_callback_;
     }
-
-    // revisionAfter intentionally is not copied into sampled_heap_revision_
-    // unless it matches the state that was actually sampled.
-    (void)revisionAfter;
 
     unlock();
 
