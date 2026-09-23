@@ -2453,24 +2453,6 @@ bool MemoryBroker::validate() const
     return valid;
 }
 
-bool MemoryBroker::serviceDue(
-    uint32_t nowMs
-) const
-{
-    if (!isReady())
-    {
-        return false;
-    }
-
-    return
-        config_.serviceIntervalMs == 0 ||
-        static_cast<uint32_t>(
-            nowMs -
-            last_service_ms_
-        ) >=
-            config_.serviceIntervalMs;
-}
-
 void MemoryBroker::service()
 {
     if (!isReady())
