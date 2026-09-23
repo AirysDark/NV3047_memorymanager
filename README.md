@@ -51,6 +51,13 @@ Performance work is concentrated inside this repository:
 - MemoryBroker checks cached pressure before scanning clients/leases
 - redundant autoruntime semaphore operations were removed from active frame callbacks
 - frame scratch reset/allocation uses its own short critical section instead of the global allocation-table semaphore
+- unused frame scratch now skips synchronization entirely
+- active takeover caches AutoMemory/framebuffer/manager/DMA references once at provider begin
+- provider front/draw/swap callbacks use trusted session accessors instead of repeated readiness navigation
+- provider service is gated above AutoMemory by dirty revisions and broker/heap deadlines
+- one provider timestamp is reused through AutoMemory, MemoryManager and MemoryBroker
+- duplicate pressure reads and unconditional second broker-usage synchronizations were removed
+- profiling now separates callback calls, fast exits and actual maintenance passes
 - profiling is optional and disabled by default
 - all normal tuning defaults are centralized in `NV3047_MemoryConfig.h`
 
@@ -98,11 +105,17 @@ NV3047Memory::AutoMemoryPerformanceStats stats =
 
 The `PerformanceProfile` example renders a 160-object primitive workload and reports:
 
-- `beginFrame()` calls / average / maximum microseconds
-- `AutoMemory::service()` calls / average / maximum microseconds
+- provider ready/front/draw/swap callback counts
+- provider begin-frame calls, real resets and no-op frames
+- provider service calls, full passes and fast exits
+- provider service average/maximum microseconds
+- AutoMemory full service passes and timing
 - heap sample passes
-- broker usage synchronizations
+- broker service due/skipped counts
+- broker usage updates versus revision skips
 - asset usage synchronizations
+- pressure-policy actions
+- DMA acquire/release counts
 
 Profiling uses `micros()`, so it is intentionally disabled by default.
 
