@@ -402,7 +402,7 @@ void providerBeginFrame()
     }
 
     const bool reset =
-        session.automatic->
+        session.manager->
             beginFrameIfNeeded();
 
     if (profile)
