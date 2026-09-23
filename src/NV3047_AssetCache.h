@@ -74,7 +74,10 @@ public:
     void trimToBytes(size_t targetBytes);
     void trimToPercent(uint8_t percent);
 
+    // O(1) snapshot. Accounting is maintained when entries change instead
+    // of rescanning the cache on every broker service pass.
     Stats stats() const;
+    uint32_t usageRevision() const;
     bool validate() const;
 
 private:
@@ -95,6 +98,15 @@ private:
     size_t budget_bytes_;
     size_t used_bytes_;
     size_t peak_bytes_;
+    size_t pinned_bytes_;
+    size_t reclaimable_bytes_;
+
+    uint8_t entry_count_;
+    uint8_t pinned_count_;
+
+    // Changes only when cache byte/pin accounting changes. Reads/touches do
+    // not advance it, allowing AutoMemory to skip redundant broker syncs.
+    uint32_t usage_revision_;
 
     uint32_t hits_;
     uint32_t misses_;
