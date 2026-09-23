@@ -316,4 +316,64 @@ uint8_t DMAPool::freeCount() const
     return count;
 }
 
+
+bool DMAPool::validate() const
+{
+    if (
+        !manager_ ||
+        !manager_->isReady() ||
+        block_count_ == 0 ||
+        block_count_ > MAX_BLOCKS
+    )
+    {
+        return false;
+    }
+
+    uint8_t inUse = 0;
+
+    for (
+        uint8_t i = 0;
+        i < block_count_;
+        ++i
+    )
+    {
+        const Block& block =
+            blocks_[i];
+
+        if (
+            !block.pointer ||
+            !manager_->owns(
+                block.pointer
+            )
+        )
+        {
+            return false;
+        }
+
+        if (block.inUse)
+        {
+            ++inUse;
+        }
+    }
+
+    for (
+        uint8_t i = block_count_;
+        i < MAX_BLOCKS;
+        ++i
+    )
+    {
+        if (
+            blocks_[i].pointer ||
+            blocks_[i].inUse
+        )
+        {
+            return false;
+        }
+    }
+
+    return
+        inUse ==
+            used_count_;
+}
+
 } // namespace NV3047Memory
