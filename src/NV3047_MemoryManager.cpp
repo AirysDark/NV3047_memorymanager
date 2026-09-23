@@ -26,6 +26,7 @@ MemoryManager::MemoryManager()
       scratch_capacity_(0),
       scratch_offset_(0),
       scratch_peak_(0),
+      scratch_touched_(false),
       scratch_region_(MemoryRegion::Auto),
       pressure_callback_(nullptr),
       last_pressure_(MemoryPressure::Normal),
@@ -74,6 +75,7 @@ bool MemoryManager::begin(
     scratch_capacity_ = 0;
     scratch_offset_ = 0;
     scratch_peak_ = 0;
+    scratch_touched_ = false;
     scratch_region_ = MemoryRegion::Auto;
 
     pressure_callback_ = nullptr;
@@ -197,6 +199,7 @@ void MemoryManager::end()
     scratch_capacity_ = 0;
     scratch_offset_ = 0;
     scratch_peak_ = 0;
+    scratch_touched_ = false;
     scratch_region_ = MemoryRegion::Auto;
 
     ready_ = false;
@@ -1439,6 +1442,10 @@ bool MemoryManager::validate() const
         (
             scratch_capacity_ == 0 ||
             scratch_base_ != nullptr
+        ) &&
+        (
+            scratch_touched_ ||
+            scratch_offset_ == 0
         );
 
     portEXIT_CRITICAL(
@@ -1450,7 +1457,38 @@ bool MemoryManager::validate() const
 
 void MemoryManager::beginFrame()
 {
-    resetScratch();
+    beginFrameIfNeeded();
+}
+
+bool MemoryManager::beginFrameIfNeeded()
+{
+    if (
+        !ready_ ||
+        !scratch_touched_
+    )
+    {
+        return false;
+    }
+
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
+    const bool changed =
+        scratch_touched_ ||
+        scratch_offset_ != 0;
+
+    if (changed)
+    {
+        scratch_offset_ = 0;
+        scratch_touched_ = false;
+    }
+
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
+
+    return changed;
 }
 
 void* MemoryManager::scratch(
@@ -1547,6 +1585,8 @@ void* MemoryManager::scratch(
     scratch_offset_ =
         startOffset + bytes;
 
+    scratch_touched_ = true;
+
     if (
         scratch_offset_ >
         scratch_peak_
@@ -1570,7 +1610,10 @@ void* MemoryManager::scratch(
 
 void MemoryManager::resetScratch()
 {
-    if (!ready_)
+    if (
+        !ready_ ||
+        !scratch_touched_
+    )
     {
         return;
     }
@@ -1580,6 +1623,7 @@ void MemoryManager::resetScratch()
     );
 
     scratch_offset_ = 0;
+    scratch_touched_ = false;
 
     portEXIT_CRITICAL(
         &scratch_mux_
@@ -1615,6 +1659,9 @@ bool MemoryManager::rewindScratch(
 
     scratch_offset_ =
         mark;
+
+    scratch_touched_ =
+        mark != 0;
 
     portEXIT_CRITICAL(
         &scratch_mux_
@@ -1653,6 +1700,13 @@ size_t MemoryManager::scratchUsed() const
     );
 
     return value;
+}
+
+bool MemoryManager::scratchWasUsed() const
+{
+    return
+        ready_ &&
+        scratch_touched_;
 }
 
 HeapStats MemoryManager::readHeap(
@@ -1810,13 +1864,50 @@ bool MemoryManager::refreshStats(
     bool force
 )
 {
+    return
+        refreshStatsAt(
+            millis(),
+            force
+        );
+}
+
+bool MemoryManager::serviceDue(
+    uint32_t nowMs
+) const
+{
     if (!ready_)
     {
         return false;
     }
 
-    const uint32_t now =
-        millis();
+    if (
+        !cached_stats_valid_ ||
+        heap_revision_ !=
+            sampled_heap_revision_
+    )
+    {
+        return true;
+    }
+
+    return
+        config_.monitorIntervalMs == 0 ||
+        static_cast<uint32_t>(
+            nowMs -
+            last_monitor_ms_
+        ) >=
+            config_.monitorIntervalMs;
+}
+
+bool MemoryManager::refreshStatsAt(
+    uint32_t nowMs,
+    bool force
+)
+{
+    if (!ready_)
+    {
+        return false;
+    }
+
 
     // Fast path: these are native-width values on ESP32-S3. A concurrent
     // change can at worst defer monitoring to the next service call; it
@@ -1834,7 +1925,7 @@ bool MemoryManager::refreshStats(
     const bool intervalDue =
         config_.monitorIntervalMs == 0 ||
         static_cast<uint32_t>(
-            now -
+            nowMs -
             last_monitor_ms_
         ) >=
             config_.monitorIntervalMs;
@@ -1873,7 +1964,7 @@ bool MemoryManager::refreshStats(
     ++heap_sample_count_;
 
     last_monitor_ms_ =
-        now;
+        nowMs;
 
     pressureChanged =
         fresh.pressure !=
@@ -1964,7 +2055,27 @@ void MemoryManager::service()
         return;
     }
 
-    refreshStats(false);
+    service(
+        millis()
+    );
+}
+
+void MemoryManager::service(
+    uint32_t nowMs
+)
+{
+    if (
+        !ready_ ||
+        !serviceDue(nowMs)
+    )
+    {
+        return;
+    }
+
+    refreshStatsAt(
+        nowMs,
+        false
+    );
 }
 
 const char* MemoryManager::regionName(
