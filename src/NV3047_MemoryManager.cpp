@@ -28,7 +28,12 @@ MemoryManager::MemoryManager()
       scratch_region_(MemoryRegion::Auto),
       pressure_callback_(nullptr),
       last_pressure_(MemoryPressure::Normal),
-      last_monitor_ms_(0)
+      last_monitor_ms_(0),
+      cached_stats_(),
+      cached_stats_valid_(false),
+      heap_revision_(0),
+      sampled_heap_revision_(0),
+      heap_sample_count_(0)
 {
     memset(
         records_,
@@ -72,6 +77,13 @@ bool MemoryManager::begin(
 
     pressure_callback_ = nullptr;
     last_monitor_ms_ = millis();
+
+    cached_stats_ =
+        MemoryStats();
+    cached_stats_valid_ = false;
+    heap_revision_ = 0;
+    sampled_heap_revision_ = 0;
+    heap_sample_count_ = 0;
 
     memset(
         records_,
@@ -154,8 +166,14 @@ bool MemoryManager::begin(
         }
     }
 
+    // Scratch is a real heap allocation even though it is intentionally
+    // outside the tracked allocation table.
+    markHeapStatsDirty();
+
+    refreshStats(true);
+
     last_pressure_ =
-        pressure();
+        cached_stats_.pressure;
 
     return true;
 }
@@ -183,6 +201,12 @@ void MemoryManager::end()
     ready_ = false;
     psram_available_ = false;
     pressure_callback_ = nullptr;
+
+    cached_stats_ =
+        MemoryStats();
+    cached_stats_valid_ = false;
+    heap_revision_ = 0;
+    sampled_heap_revision_ = 0;
 
     // mutex_storage_ is permanent object storage; no heap memory is freed.
     mutex_ = nullptr;
@@ -470,6 +494,7 @@ bool MemoryManager::trackAllocation(
             }
 
             unlock();
+            markHeapStatsDirty();
             return true;
         }
     }
@@ -1032,6 +1057,7 @@ void MemoryManager::release(
     if (found)
     {
         rawFree(pointer);
+        markHeapStatsDirty();
     }
 }
 
@@ -1607,7 +1633,7 @@ HeapStats MemoryManager::readHeap(
     return stats;
 }
 
-MemoryStats MemoryManager::getStats() const
+MemoryStats MemoryManager::sampleStats() const
 {
     MemoryStats stats;
 
@@ -1663,6 +1689,185 @@ MemoryStats MemoryManager::getStats() const
     return stats;
 }
 
+MemoryStats MemoryManager::getStats() const
+{
+    // Explicit diagnostics remain fresh by design. The presentation hot path
+    // uses cachedStats()/pressure() and service-driven refreshes instead.
+    return sampleStats();
+}
+
+MemoryStats MemoryManager::cachedStats() const
+{
+    lock();
+
+    const bool valid =
+        cached_stats_valid_;
+
+    const MemoryStats cached =
+        cached_stats_;
+
+    unlock();
+
+    if (valid)
+    {
+        return cached;
+    }
+
+    return sampleStats();
+}
+
+MemoryPressure MemoryManager::pressure() const
+{
+    return
+        cachedStats().pressure;
+}
+
+void MemoryManager::markHeapStatsDirty()
+{
+    if (!ready_)
+    {
+        return;
+    }
+
+    lock();
+
+    ++heap_revision_;
+
+    if (heap_revision_ == 0)
+    {
+        heap_revision_ = 1;
+        sampled_heap_revision_ = 0;
+    }
+
+    unlock();
+}
+
+bool MemoryManager::refreshStats(
+    bool force
+)
+{
+    if (!ready_)
+    {
+        return false;
+    }
+
+    const uint32_t now =
+        millis();
+
+    uint32_t revisionBefore = 0;
+    uint32_t sampledRevision = 0;
+    bool valid = false;
+
+    lock();
+
+    revisionBefore =
+        heap_revision_;
+
+    sampledRevision =
+        sampled_heap_revision_;
+
+    valid =
+        cached_stats_valid_;
+
+    const uint32_t age =
+        static_cast<uint32_t>(
+            now -
+            last_monitor_ms_
+        );
+
+    const bool intervalDue =
+        config_.monitorIntervalMs == 0 ||
+        age >=
+            config_.monitorIntervalMs;
+
+    const bool dirty =
+        revisionBefore !=
+            sampledRevision;
+
+    const bool shouldSample =
+        force ||
+        !valid ||
+        dirty ||
+        intervalDue;
+
+    unlock();
+
+    if (!shouldSample)
+    {
+        return false;
+    }
+
+    const MemoryStats fresh =
+        sampleStats();
+
+    PressureCallback callback =
+        nullptr;
+
+    bool pressureChanged = false;
+
+    lock();
+
+    // If an allocation/release raced with the heap query, preserve the dirty
+    // revision so the next service pass samples again.
+    const uint32_t revisionAfter =
+        heap_revision_;
+
+    cached_stats_ =
+        fresh;
+
+    cached_stats_valid_ = true;
+    sampled_heap_revision_ =
+        revisionBefore;
+
+    ++heap_sample_count_;
+    last_monitor_ms_ =
+        now;
+
+    pressureChanged =
+        fresh.pressure !=
+            last_pressure_;
+
+    if (pressureChanged)
+    {
+        last_pressure_ =
+            fresh.pressure;
+
+        callback =
+            pressure_callback_;
+    }
+
+    // revisionAfter intentionally is not copied into sampled_heap_revision_
+    // unless it matches the state that was actually sampled.
+    (void)revisionAfter;
+
+    unlock();
+
+    if (
+        pressureChanged &&
+        callback
+    )
+    {
+        callback(
+            fresh.pressure,
+            fresh
+        );
+    }
+
+    return true;
+}
+
+uint32_t MemoryManager::heapSampleCount() const
+{
+    lock();
+
+    const uint32_t value =
+        heap_sample_count_;
+
+    unlock();
+
+    return value;
+}
+
 MemoryPressure MemoryManager::evaluatePressure(
     const MemoryStats& stats
 ) const
@@ -1696,11 +1901,6 @@ MemoryPressure MemoryManager::evaluatePressure(
     return MemoryPressure::Normal;
 }
 
-MemoryPressure MemoryManager::pressure() const
-{
-    return getStats().pressure;
-}
-
 void MemoryManager::setPressureCallback(
     PressureCallback callback
 )
@@ -1716,44 +1916,7 @@ void MemoryManager::service()
         return;
     }
 
-    const uint32_t now =
-        millis();
-
-    if (
-        config_.monitorIntervalMs != 0 &&
-        (
-            uint32_t
-        )(
-            now -
-            last_monitor_ms_
-        ) <
-            config_.monitorIntervalMs
-    )
-    {
-        return;
-    }
-
-    last_monitor_ms_ = now;
-
-    const MemoryStats stats =
-        getStats();
-
-    if (
-        stats.pressure !=
-        last_pressure_
-    )
-    {
-        last_pressure_ =
-            stats.pressure;
-
-        if (pressure_callback_)
-        {
-            pressure_callback_(
-                stats.pressure,
-                stats
-            );
-        }
-    }
+    refreshStats(false);
 }
 
 const char* MemoryManager::regionName(
