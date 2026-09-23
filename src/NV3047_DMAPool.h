@@ -38,6 +38,8 @@ public:
     uint8_t usedCount() const;
     uint8_t freeCount() const;
 
+    bool validate() const;
+
 private:
     struct Block
     {
