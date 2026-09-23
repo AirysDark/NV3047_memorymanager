@@ -238,9 +238,14 @@ bool AutoMemory::isReady() const
 
 void AutoMemory::beginFrame()
 {
+    beginFrameIfNeeded();
+}
+
+bool AutoMemory::beginFrameIfNeeded()
+{
     if (!ready_)
     {
-        return;
+        return false;
     }
 
     const bool profile =
@@ -251,7 +256,9 @@ void AutoMemory::beginFrame()
             ? micros()
             : 0;
 
-    manager_->beginFrame();
+    const bool reset =
+        manager_->
+            beginFrameIfNeeded();
 
     if (profile)
     {
@@ -262,6 +269,17 @@ void AutoMemory::beginFrame()
 
         ++performance_stats_.
             beginFrameCalls;
+
+        if (reset)
+        {
+            ++performance_stats_.
+                beginFrameResets;
+        }
+        else
+        {
+            ++performance_stats_.
+                beginFrameNoOps;
+        }
 
         performance_stats_.
             totalBeginFrameUs +=
@@ -278,9 +296,78 @@ void AutoMemory::beginFrame()
                     elapsed;
         }
     }
+
+    return reset;
+}
+bool AutoMemory::serviceDue(
+    uint32_t nowMs
+) const
+{
+    if (!ready_)
+    {
+        return false;
+    }
+
+    if (
+        !driver_usage_synced_ ||
+        assets_.usageRevision() !=
+            synced_asset_revision_ ||
+        manager_->pressure() !=
+            last_pressure_
+    )
+    {
+        return true;
+    }
+
+    if (
+        manager_->
+            serviceDue(nowMs)
+    )
+    {
+        return true;
+    }
+
+    return
+        broker_.isReady() &&
+        broker_.serviceDue(nowMs);
 }
 
 void AutoMemory::service()
+{
+    if (!ready_)
+    {
+        return;
+    }
+
+    const uint32_t now =
+        millis();
+
+    const bool profile =
+        config_.enablePerformanceProfiling;
+
+    if (profile)
+    {
+        ++performance_stats_.
+            serviceCalls;
+    }
+
+    if (!serviceDue(now))
+    {
+        if (profile)
+        {
+            ++performance_stats_.
+                serviceFastExits;
+        }
+
+        return;
+    }
+
+    service(now);
+}
+
+void AutoMemory::service(
+    uint32_t nowMs
+)
 {
     if (!ready_)
     {
@@ -295,21 +382,29 @@ void AutoMemory::service()
             ? micros()
             : 0;
 
+    if (profile)
+    {
+        ++performance_stats_.
+            serviceFullPasses;
+    }
+
     uint32_t samplesBefore = 0;
 
     if (profile)
     {
-        ++performance_stats_.
-            serviceCalls;
-
         samplesBefore =
             manager_->
                 heapSampleCount();
     }
 
-    // MemoryManager::service() is now effectively free unless heap state is
-    // dirty or the configured monitor interval has elapsed.
-    manager_->service();
+    if (
+        manager_->
+            serviceDue(nowMs)
+    )
+    {
+        manager_->
+            service(nowMs);
+    }
 
     if (
         profile &&
@@ -321,13 +416,29 @@ void AutoMemory::service()
             heapSamplePasses;
     }
 
-    // Fixed driver bytes are published once. Asset usage is republished only
-    // when AssetCache's accounting revision changes.
+    // This is revision-gated before any broker lock/stat work.
     syncBrokerUsage(false);
 
     if (broker_.isReady())
     {
-        broker_.service();
+        if (
+            broker_.
+                serviceDue(nowMs)
+        )
+        {
+            if (profile)
+            {
+                ++performance_stats_.
+                    brokerServiceDuePasses;
+            }
+
+            broker_.service(nowMs);
+        }
+        else if (profile)
+        {
+            ++performance_stats_.
+                brokerServiceSkipped;
+        }
     }
 
     const MemoryPressure current =
@@ -337,17 +448,36 @@ void AutoMemory::service()
         current !=
             last_pressure_;
 
-    // Broker pressure reclaim is owned by MemoryBroker::service(). This layer
-    // handles only non-broker fallback policy and scratch lifecycle.
-    applyPressurePolicy(
-        current,
-        stateChanged
-    );
+    const bool policyActed =
+        applyPressurePolicy(
+            current,
+            stateChanged
+        );
 
-    syncBrokerUsage(false);
+    // Broker reclaim or fallback pressure policy can mutate asset accounting.
+    // Only enter the broker update path if its revision actually changed.
+    if (
+        assets_.usageRevision() !=
+            synced_asset_revision_
+    )
+    {
+        syncBrokerUsage(false);
+    }
 
+    // If a policy action released heap memory the manager revision is now
+    // dirty. Do not force a second heap sample into this same frame; the next
+    // serviceDue() call will immediately schedule it.
     last_pressure_ =
-        manager_->pressure();
+        current;
+
+    if (
+        profile &&
+        policyActed
+    )
+    {
+        ++performance_stats_.
+            pressurePolicyActions;
+    }
 
     if (profile)
     {
@@ -372,7 +502,6 @@ void AutoMemory::service()
         }
     }
 }
-
 MemoryManager& AutoMemory::memory()
 {
     return *manager_;
@@ -719,6 +848,43 @@ bool AutoMemory::syncBrokerUsage(
     bool force
 )
 {
+    const bool driverNeedsSync =
+        driver_client_ !=
+            INVALID_BROKER_CLIENT &&
+        (
+            force ||
+            !driver_usage_synced_
+        );
+
+    const uint32_t assetRevision =
+        assets_.usageRevision();
+
+    const bool assetNeedsSync =
+        asset_client_ !=
+            INVALID_BROKER_CLIENT &&
+        (
+            force ||
+            assetRevision !=
+                synced_asset_revision_
+        );
+
+    if (
+        !driverNeedsSync &&
+        !assetNeedsSync
+    )
+    {
+        if (
+            config_.
+                enablePerformanceProfiling
+        )
+        {
+            ++performance_stats_.
+                brokerUsageSyncSkips;
+        }
+
+        return false;
+    }
+
     if (!broker_.isReady())
     {
         return false;
@@ -726,14 +892,7 @@ bool AutoMemory::syncBrokerUsage(
 
     bool changed = false;
 
-    if (
-        driver_client_ !=
-            INVALID_BROKER_CLIENT &&
-        (
-            force ||
-            !driver_usage_synced_
-        )
-    )
+    if (driverNeedsSync)
     {
         broker_.setObservedUsage(
             driver_client_,
@@ -745,43 +904,30 @@ bool AutoMemory::syncBrokerUsage(
         changed = true;
     }
 
-    if (
-        asset_client_ !=
-            INVALID_BROKER_CLIENT
-    )
+    if (assetNeedsSync)
     {
-        const uint32_t revision =
-            assets_.usageRevision();
+        const AssetCache::Stats cache =
+            assets_.stats();
+
+        broker_.setObservedUsage(
+            asset_client_,
+            cache.usedBytes,
+            cache.reclaimableBytes,
+            MemoryRegion::PSRAM
+        );
+
+        synced_asset_revision_ =
+            assetRevision;
+
+        changed = true;
 
         if (
-            force ||
-            revision !=
-                synced_asset_revision_
+            config_.
+                enablePerformanceProfiling
         )
         {
-            const AssetCache::Stats cache =
-                assets_.stats();
-
-            broker_.setObservedUsage(
-                asset_client_,
-                cache.usedBytes,
-                cache.reclaimableBytes,
-                MemoryRegion::PSRAM
-            );
-
-            synced_asset_revision_ =
-                revision;
-
-            changed = true;
-
-            if (
-                config_.
-                    enablePerformanceProfiling
-            )
-            {
-                ++performance_stats_.
-                    assetUsageSyncs;
-            }
+            ++performance_stats_.
+                assetUsageSyncs;
         }
     }
 
@@ -797,8 +943,7 @@ bool AutoMemory::syncBrokerUsage(
 
     return changed;
 }
-
-void AutoMemory::applyPressurePolicy(
+bool AutoMemory::applyPressurePolicy(
     MemoryPressure current,
     bool stateChanged
 )
@@ -903,6 +1048,8 @@ void AutoMemory::applyPressurePolicy(
     {
         ++pressure_actions_;
     }
+
+    return acted;
 }
 
 float AutoMemory::fragmentationPercent(
