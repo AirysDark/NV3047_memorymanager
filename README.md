@@ -11,7 +11,7 @@ The memory policy and broker live in this repository. The active driver branch n
 
 ### Active reference branches
 
-- `NV3047_drivers:driver_overhaul_v2`
+- `NV3047_drivers:driver_overhaul_v3`
 - `NV3047_UI:ui-overhaul-v2`
 
 These overhaul branches are the source of truth for integration decisions.
@@ -26,9 +26,84 @@ These overhaul branches are the source of truth for integration decisions.
 
 ## Current version
 
-**0.5.0**
+**0.6.0 — Memory Manager Overhaul V1**
 
-The library has moved beyond a basic allocator and now provides an automatic ownership layer for the major memory classes used by the NV3047 stack.
+This branch is the first performance-focused overhaul of the automatic memory system. It keeps the include-only takeover contract and adaptive ownership model while reducing work performed in the rendering/presentation hot path.
+
+## 0.6.0 Memory Manager Overhaul V1
+
+The overhaul was created after staged hardware testing showed that the original memory-manager takeover was functionally stable but measured about **7.2% lower overall throughput** than the driver-only V2 path under a heavy multi-object rendering benchmark.
+
+The overhaul does not change touch mapping, panel colour packing, framebuffer count, RGB timing, or the driver repository.
+
+Performance work is concentrated inside this repository:
+
+- cached heap/pressure snapshots instead of repeated heap-capability queries
+- allocation/release revisions that invalidate heap state only when memory topology changes
+- constant-time framebuffer readiness during normal rendering
+- constant-time broker readiness instead of scanning the allocation table
+- DMA-pool hot APIs no longer prove ownership with a global allocation-table scan
+- AssetCache hit/peek paths no longer scan the global allocation table
+- AssetCache byte/pin/reclaim accounting is maintained incrementally, making `stats()` O(1)
+- fixed driver framebuffer/DMA usage is published to the broker once per takeover session
+- asset broker usage is republished only when the cache usage revision changes
+- duplicate pressure reclaim passes were removed; MemoryBroker owns broker-enabled pressure reclamation
+- MemoryBroker checks cached pressure before scanning clients/leases
+- redundant autoruntime semaphore operations were removed from active frame callbacks
+- profiling is optional and disabled by default
+- all normal tuning defaults are centralized in `NV3047_MemoryConfig.h`
+
+The normal integration remains exactly:
+
+```cpp
+#include <NV3047_Memory.h>
+```
+
+No sketch-side memory startup or service calls are required.
+
+### Driver Overhaul V3 relationship
+
+`driver_overhaul_v3` independently caches the active draw-buffer pointer for each frame, removing repeated provider crossings from every drawing primitive.
+
+That complements this branch:
+
+```text
+Driver V3
+    -> removes object-count-dependent provider lookup overhead
+
+Memory Manager Overhaul V1
+    -> removes remaining allocation scans, heap polling,
+       redundant synchronization and repeated accounting work
+```
+
+The driver remains a read-only dependency/reference for this branch.
+
+### Optional hardware profiling
+
+Profiling can be enabled after normal automatic startup:
+
+```cpp
+NV3047Memory::AutoMemory::instance().
+    setPerformanceProfiling(true);
+```
+
+Read:
+
+```cpp
+NV3047Memory::AutoMemoryPerformanceStats stats =
+    NV3047Memory::AutoMemory::instance().
+        performanceStats();
+```
+
+The `PerformanceProfile` example renders a 160-object primitive workload and reports:
+
+- `beginFrame()` calls / average / maximum microseconds
+- `AutoMemory::service()` calls / average / maximum microseconds
+- heap sample passes
+- broker usage synchronizations
+- asset usage synchronizations
+
+Profiling uses `micros()`, so it is intentionally disabled by default.
 
 ## 0.5.0 include-only automatic runtime
 
