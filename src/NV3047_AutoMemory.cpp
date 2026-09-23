@@ -1039,24 +1039,33 @@ bool AutoMemory::validate() const
         return false;
     }
 
-    if (
-        framebuffer_ready_ &&
-        !framebuffers_.isReady()
-    )
+    if (framebuffer_ready_)
     {
-        return false;
+        if (!framebuffers_.isReady())
+        {
+            return false;
+        }
+
+        const uint16_t* front =
+            framebuffers_.front();
+
+        const uint16_t* back =
+            framebuffers_.back();
+
+        if (
+            !front ||
+            !back ||
+            !manager_->owns(front) ||
+            !manager_->owns(back)
+        )
+        {
+            return false;
+        }
     }
 
     if (
         dma_ready_ &&
-        (
-            dma_pool_.blockCount() == 0 ||
-            (
-                dma_pool_.usedCount() +
-                dma_pool_.freeCount()
-            ) !=
-                dma_pool_.blockCount()
-        )
+        !dma_pool_.validate()
     )
     {
         return false;
