@@ -40,6 +40,48 @@ public:
 
     void swapRoles();
 
+    // Trusted takeover-session fast access. These intentionally perform no
+    // readiness/ownership checks. The driver bridge may use them only after
+    // providerBegin() has validated and established the session, and before
+    // providerEnd() invalidates it.
+    inline uint16_t* frontUnchecked()
+    {
+        return
+            a_is_front_
+                ? buffer_a_
+                : buffer_b_;
+    }
+
+    inline const uint16_t* frontUnchecked() const
+    {
+        return
+            a_is_front_
+                ? buffer_a_
+                : buffer_b_;
+    }
+
+    inline uint16_t* backUnchecked()
+    {
+        return
+            a_is_front_
+                ? buffer_b_
+                : buffer_a_;
+    }
+
+    inline const uint16_t* backUnchecked() const
+    {
+        return
+            a_is_front_
+                ? buffer_b_
+                : buffer_a_;
+    }
+
+    inline void swapRolesUnchecked()
+    {
+        a_is_front_ =
+            !a_is_front_;
+    }
+
     void clearBack(uint16_t color = 0x0000);
     void clearFront(uint16_t color = 0x0000);
     void clearBoth(uint16_t color = 0x0000);
