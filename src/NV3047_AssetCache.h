@@ -124,6 +124,10 @@ private:
 
     void accountAdd(const Entry& entry);
     void accountRemove(const Entry& entry);
+    void accountPinChange(
+        Entry& entry,
+        bool pinned
+    );
     void noteUsageChange();
 };
 
