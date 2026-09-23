@@ -5,8 +5,94 @@
 
 namespace {
 
-bool bridge_active = false;
-bool started_by_bridge = false;
+struct DriverTakeoverSession
+{
+    volatile bool ready = false;
+    bool startedByBridge = false;
+    bool profiling = false;
+
+    NV3047Memory::AutoMemory* automatic = nullptr;
+    NV3047Memory::FramebufferPair* frames = nullptr;
+    NV3047Memory::MemoryManager* manager = nullptr;
+    NV3047Memory::DMAPool* dma = nullptr;
+
+    size_t bufferSizeBytes = 0;
+    size_t totalFramebufferBytes = 0;
+
+    NV3047Memory::DriverTakeoverPerformanceStats perf;
+};
+
+DriverTakeoverSession session;
+
+inline bool sessionReady()
+{
+    return session.ready;
+}
+
+void clearSessionRuntime()
+{
+    session.ready = false;
+    session.startedByBridge = false;
+    session.automatic = nullptr;
+    session.frames = nullptr;
+    session.manager = nullptr;
+    session.dma = nullptr;
+    session.bufferSizeBytes = 0;
+    session.totalFramebufferBytes = 0;
+    session.profiling = false;
+}
+
+void establishSession(
+    NV3047Memory::AutoMemory& automatic,
+    bool startedByBridge)
+{
+    session.automatic = &automatic;
+    session.frames = &automatic.framebuffers();
+    session.manager = &automatic.memory();
+    session.dma = &automatic.dmaPool();
+
+    session.bufferSizeBytes =
+        session.frames->bytesPerBuffer();
+
+    session.totalFramebufferBytes =
+        session.frames->totalBytes();
+
+    session.startedByBridge =
+        startedByBridge;
+
+    session.profiling =
+        automatic.performanceProfilingEnabled();
+
+    // Publish ready last. Provider callbacks trust the cached references while
+    // this flag is true and stop using them as soon as providerEnd clears it.
+    session.ready = true;
+}
+
+inline void recordProviderServiceElapsed(
+    uint32_t startUs)
+{
+    if (!session.profiling)
+    {
+        return;
+    }
+
+    const uint32_t elapsed =
+        static_cast<uint32_t>(
+            micros() - startUs
+        );
+
+    session.perf.totalProviderServiceUs +=
+        elapsed;
+
+    if (
+        elapsed >
+        session.perf.maxProviderServiceUs
+    )
+    {
+        session.perf.maxProviderServiceUs =
+            elapsed;
+    }
+}
 
 bool providerBegin(
     uint16_t width,
@@ -16,22 +102,21 @@ bool providerBegin(
     size_t buffer_alignment,
     bool zero_buffers,
     size_t dma_block_bytes,
-    size_t dma_alignment) {
-
+    size_t dma_alignment)
+{
     (void)zero_buffers;
 
-    if (!nv3047_memorymanager_autoruntime_lock()) {
+    if (!nv3047_memorymanager_autoruntime_lock())
+    {
         return false;
     }
 
-    bool success = false;
-
-    if (width == 0 || height == 0) {
-        nv3047_memorymanager_autoruntime_unlock();
-        return false;
-    }
-
-    if (buffer_count != 2) {
+    if (
+        width == 0 ||
+        height == 0 ||
+        buffer_count != 2
+    )
+    {
         nv3047_memorymanager_autoruntime_unlock();
         return false;
     }
@@ -41,33 +126,55 @@ bool providerBegin(
         static_cast<size_t>(height) *
         sizeof(uint16_t);
 
-    if (buffer_size_bytes != expected_bytes) {
+    if (
+        buffer_size_bytes != expected_bytes ||
+        buffer_alignment > 64
+    )
+    {
         nv3047_memorymanager_autoruntime_unlock();
         return false;
     }
 
-    if (buffer_alignment > 64) {
+    // Idempotent begin on an already-established session.
+    if (sessionReady())
+    {
+        const bool matches =
+            session.frames &&
+            session.frames->width() == width &&
+            session.frames->height() == height &&
+            session.bufferSizeBytes ==
+                buffer_size_bytes;
+
         nv3047_memorymanager_autoruntime_unlock();
-        return false;
+        return matches;
     }
 
     NV3047Memory::AutoMemory& automatic =
         NV3047Memory::AutoMemory::instance();
 
-    if (automatic.isReady()) {
+    if (automatic.isReady())
+    {
         NV3047Memory::FramebufferPair& frames =
             automatic.framebuffers();
 
-        if (frames.isReady()) {
-            if (frames.width() != width ||
+        if (frames.isReady())
+        {
+            if (
+                frames.width() != width ||
                 frames.height() != height ||
-                frames.bytesPerBuffer() != buffer_size_bytes) {
+                frames.bytesPerBuffer() !=
+                    buffer_size_bytes ||
+                !automatic.validate()
+            )
+            {
                 nv3047_memorymanager_autoruntime_unlock();
                 return false;
             }
 
-            bridge_active = true;
-            started_by_bridge = false;
+            establishSession(
+                automatic,
+                false
+            );
 
             automatic.noteUIActivity();
 
@@ -75,11 +182,10 @@ bool providerBegin(
             return true;
         }
 
-        // The include-only runtime starts a deliberately lightweight broker
-        // before setup(). That instance is safe to replace with the driver's
-        // full framebuffer/DMA configuration. A manually-created AutoMemory
-        // instance is not silently destroyed.
-        if (!nv3047_memorymanager_autoruntime_minimal_owned()) {
+        // The include-only runtime starts lightweight manager/broker mode
+        // before setup(). It is safe to replace only when that runtime owns it.
+        if (!nv3047_memorymanager_autoruntime_minimal_owned())
+        {
             nv3047_memorymanager_autoruntime_unlock();
             return false;
         }
@@ -100,24 +206,37 @@ bool providerBegin(
     config.enableDMAPool =
         dma_block_bytes != 0;
 
-    if (config.enableDMAPool) {
-        config.dmaBlockBytes = dma_block_bytes;
+    if (config.enableDMAPool)
+    {
+        config.dmaBlockBytes =
+            dma_block_bytes;
+
         config.dmaBlockCount = 1;
+
         config.dmaAlignment =
             dma_alignment == 0
                 ? 4
                 : dma_alignment;
     }
 
-    if (automatic.begin(config) &&
-        automatic.framebuffers().isReady()) {
+    bool success = false;
 
-        bridge_active = true;
-        started_by_bridge = true;
+    if (
+        automatic.begin(config) &&
+        automatic.framebuffers().isReady() &&
+        automatic.validate()
+    )
+    {
+        establishSession(
+            automatic,
+            true
+        );
 
         automatic.noteUIActivity();
         success = true;
-    } else if (automatic.isReady()) {
+    }
+    else if (automatic.isReady())
+    {
         automatic.end();
     }
 
@@ -125,198 +244,311 @@ bool providerBegin(
     return success;
 }
 
-void providerEnd() {
-    if (!nv3047_memorymanager_autoruntime_lock()) {
+void providerEnd()
+{
+    if (!nv3047_memorymanager_autoruntime_lock())
+    {
         return;
     }
 
-    NV3047Memory::AutoMemory& automatic =
-        NV3047Memory::AutoMemory::instance();
+    NV3047Memory::AutoMemory* automatic =
+        session.automatic;
 
-    bridge_active = false;
+    const bool startedByBridge =
+        session.startedByBridge;
 
-    // If the bridge started the full framebuffer/DMA configuration it also
-    // tears it down. The background include-only runtime will automatically
-    // restore lightweight manager-only mode afterward.
-    if (started_by_bridge &&
-        automatic.isReady()) {
-        automatic.end();
+    // Invalidate first so frame callbacks stop trusting cached references
+    // before any owned resource is torn down.
+    clearSessionRuntime();
+
+    if (
+        startedByBridge &&
+        automatic &&
+        automatic->isReady()
+    )
+    {
+        automatic->end();
     }
-
-    started_by_bridge = false;
 
     nv3047_memorymanager_autoruntime_unlock();
 }
 
-bool providerReady() {
-    if (!bridge_active) {
-        return false;
+bool providerReady()
+{
+    if (session.profiling)
+    {
+        ++session.perf.providerReadyCalls;
     }
 
-    NV3047Memory::AutoMemory& automatic =
-        NV3047Memory::AutoMemory::instance();
-
-    return
-        automatic.isReady() &&
-        automatic.framebuffers().isReady();
+    return sessionReady();
 }
 
-uint16_t* providerFront() {
-    if (!providerReady()) {
+uint16_t* providerFront()
+{
+    if (!sessionReady())
+    {
         return nullptr;
     }
 
-    return
-        NV3047Memory::AutoMemory::instance().
-            framebuffers().front();
-}
-
-uint16_t* providerDraw() {
-    if (!providerReady()) {
-        return nullptr;
+    if (session.profiling)
+    {
+        ++session.perf.providerFrontCalls;
     }
 
     return
-        NV3047Memory::AutoMemory::instance().
-            framebuffers().back();
+        session.frames->
+            frontUnchecked();
 }
 
-void providerSwap() {
-    if (!providerReady()) {
+uint16_t* providerDraw()
+{
+    if (!sessionReady())
+    {
+        return nullptr;
+    }
+
+    if (session.profiling)
+    {
+        ++session.perf.providerDrawCalls;
+    }
+
+    return
+        session.frames->
+            backUnchecked();
+}
+
+void providerSwap()
+{
+    if (!sessionReady())
+    {
         return;
     }
 
-    NV3047Memory::AutoMemory::instance().
-        framebuffers().swapRoles();
-}
-
-size_t providerBufferCount() {
-    return providerReady() ? 2 : 0;
-}
-
-size_t providerBufferSizeBytes() {
-    if (!providerReady()) {
-        return 0;
+    if (session.profiling)
+    {
+        ++session.perf.providerSwapCalls;
     }
 
+    session.frames->
+        swapRolesUnchecked();
+}
+
+size_t providerBufferCount()
+{
     return
-        NV3047Memory::AutoMemory::instance().
-            framebuffers().bytesPerBuffer();
+        sessionReady()
+            ? 2
+            : 0;
 }
 
-size_t providerTotalAllocatedBytes() {
-    if (!providerReady()) {
-        return 0;
-    }
-
+size_t providerBufferSizeBytes()
+{
     return
-        NV3047Memory::AutoMemory::instance().
-            framebuffers().totalBytes();
+        sessionReady()
+            ? session.bufferSizeBytes
+            : 0;
 }
 
-size_t providerFreeManagedBytes() {
-    if (!providerReady()) {
+size_t providerTotalAllocatedBytes()
+{
+    return
+        sessionReady()
+            ? session.totalFramebufferBytes
+            : 0;
+}
+
+size_t providerFreeManagedBytes()
+{
+    if (!sessionReady())
+    {
         return 0;
     }
 
+    // Explicit diagnostics intentionally request a fresh heap sample.
     const NV3047Memory::MemoryStats stats =
-        NV3047Memory::AutoMemory::instance().
-            memory().getStats();
+        session.manager->getStats();
 
     return stats.psram.freeBytes;
 }
 
-size_t providerLargestFreeManagedBlockBytes() {
-    if (!providerReady()) {
+size_t providerLargestFreeManagedBlockBytes()
+{
+    if (!sessionReady())
+    {
         return 0;
     }
 
+    // Explicit diagnostics intentionally request a fresh heap sample.
     const NV3047Memory::MemoryStats stats =
-        NV3047Memory::AutoMemory::instance().
-            memory().getStats();
+        session.manager->getStats();
 
     return stats.psram.largestFreeBlock;
 }
 
-void providerBeginFrame() {
-    if (!providerReady()) {
+void providerBeginFrame()
+{
+    if (!sessionReady())
+    {
         return;
     }
 
-    // Once bridge_active is true the automatic background task deliberately
-    // does not run full AutoMemory::service(). MemoryManager::beginFrame()
-    // already protects its own scratch state, so an outer runtime semaphore
-    // would add two unnecessary FreeRTOS operations per frame.
-    NV3047Memory::AutoMemory::instance().
-        beginFrame();
+    const bool profile =
+        session.profiling;
+
+    if (profile)
+    {
+        ++session.perf.
+            providerBeginFrameCalls;
+    }
+
+    const bool reset =
+        session.automatic->
+            beginFrameIfNeeded();
+
+    if (profile)
+    {
+        if (reset)
+        {
+            ++session.perf.
+                providerBeginFrameResets;
+        }
+        else
+        {
+            ++session.perf.
+                providerBeginFrameNoOps;
+        }
+    }
 }
 
-void providerService() {
-    if (!providerReady()) {
+void providerService()
+{
+    if (!sessionReady())
+    {
         return;
     }
 
-    // The bridge owns the presentation/service cadence while active. Internal
-    // manager/broker synchronization remains in their own layers.
-    NV3047Memory::AutoMemory::instance().
-        service();
+    const bool profile =
+        session.profiling;
+
+    const uint32_t startUs =
+        profile
+            ? micros()
+            : 0;
+
+    if (profile)
+    {
+        ++session.perf.
+            providerServiceCalls;
+    }
+
+    // One clock read at the top of the bridge. The same timestamp is passed
+    // through AutoMemory, MemoryManager and MemoryBroker when work is due.
+    const uint32_t now =
+        millis();
+
+    if (
+        !session.automatic->
+            serviceDue(now)
+    )
+    {
+        if (profile)
+        {
+            ++session.perf.
+                providerServiceFastExits;
+
+            recordProviderServiceElapsed(
+                startUs
+            );
+        }
+
+        return;
+    }
+
+    if (profile)
+    {
+        ++session.perf.
+            providerServiceFullPasses;
+    }
+
+    session.automatic->
+        service(now);
+
+    if (profile)
+    {
+        recordProviderServiceElapsed(
+            startUs
+        );
+    }
 }
 
 void* providerAcquireDMA(
     size_t bytes,
-    size_t alignment) {
-
-    if (!providerReady() || bytes == 0) {
+    size_t alignment)
+{
+    if (
+        !sessionReady() ||
+        bytes == 0
+    )
+    {
         return nullptr;
     }
 
-    NV3047Memory::AutoMemory& automatic =
-        NV3047Memory::AutoMemory::instance();
+    if (session.profiling)
+    {
+        ++session.perf.
+            providerDMAAcquireCalls;
+    }
 
-    NV3047Memory::DMAPool& pool =
-        automatic.dmaPool();
+    if (
+        session.dma->blockCount() != 0 &&
+        session.dma->blockBytes() >= bytes
+    )
+    {
+        void* pooled =
+            session.dma->acquire();
 
-    if (pool.blockCount() != 0 &&
-        pool.blockBytes() >= bytes) {
-
-        void* pooled = pool.acquire();
-
-        if (pooled) {
+        if (pooled)
+        {
             return pooled;
         }
     }
 
-    return automatic.memory().allocateDMA(
-        bytes,
-        alignment == 0 ? 4 : alignment,
-        "nv3047-driver-dma");
+    return
+        session.manager->allocateDMA(
+            bytes,
+            alignment == 0
+                ? 4
+                : alignment,
+            "nv3047-driver-dma"
+        );
 }
 
-void providerReleaseDMA(void* pointer) {
+void providerReleaseDMA(
+    void* pointer)
+{
     if (
         !pointer ||
-        !bridge_active ||
-        !providerReady()
-    ) {
+        !sessionReady()
+    )
+    {
         return;
     }
 
-    NV3047Memory::AutoMemory& automatic =
-        NV3047Memory::AutoMemory::instance();
+    if (session.profiling)
+    {
+        ++session.perf.
+            providerDMAReleaseCalls;
+    }
 
-    NV3047Memory::DMAPool& pool =
-        automatic.dmaPool();
-
-    if (pool.owns(pointer)) {
-        pool.release(pointer);
+    if (session.dma->owns(pointer))
+    {
+        session.dma->release(pointer);
         return;
     }
 
-    NV3047Memory::MemoryManager& manager =
-        automatic.memory();
-
-    if (manager.owns(pointer)) {
-        manager.release(pointer);
+    if (session.manager->owns(pointer))
+    {
+        session.manager->release(pointer);
     }
 }
 
@@ -342,11 +574,39 @@ const NV3047MemoryProviderV1 provider = {
 } // namespace
 
 extern "C" const NV3047MemoryProviderV1*
-nv3047_memorymanager_provider_v1() {
+nv3047_memorymanager_provider_v1()
+{
     return &provider;
 }
 
 extern "C" bool
-nv3047_memorymanager_driver_bridge_active() {
-    return bridge_active;
+nv3047_memorymanager_driver_bridge_active()
+{
+    return sessionReady();
 }
+
+extern "C" void
+nv3047_memorymanager_takeover_profiling_changed(
+    bool enabled)
+{
+    session.profiling =
+        enabled &&
+        sessionReady();
+}
+
+namespace NV3047Memory
+{
+
+DriverTakeoverPerformanceStats
+driverTakeoverPerformanceStats()
+{
+    return session.perf;
+}
+
+void resetDriverTakeoverPerformanceStats()
+{
+    session.perf =
+        DriverTakeoverPerformanceStats();
+}
+
+} // namespace NV3047Memory
