@@ -801,69 +801,75 @@ void AutoMemory::applyPressurePolicy(
 {
     bool acted = false;
 
-    if (
-        !broker_.isReady() &&
-        current ==
-        MemoryPressure::Warning
-    )
-    {
-        const AssetCache::Stats before =
-            assets_.stats();
-
-        const uint8_t percent =
-            config_.warningCachePercent > 100
-                ? 100
-                : config_.warningCachePercent;
-
-        if (before.budgetBytes != 0)
-        {
-            const size_t target =
-                (
-                    before.budgetBytes *
-                    percent
-                ) /
-                100;
-
-            if (before.usedBytes > target)
-            {
-                assets_.trimToBytes(target);
-            }
-        }
-        else if (
-            stateChanged &&
-            before.usedBytes != 0
-        )
-        {
-            const size_t target =
-                (
-                    before.usedBytes *
-                    percent
-                ) /
-                100;
-
-            assets_.trimToBytes(target);
-        }
-
-        const AssetCache::Stats after =
-            assets_.stats();
-
-        acted =
-            after.usedBytes <
-            before.usedBytes;
-    }
-    else if (
-        current ==
-        MemoryPressure::Critical
-    )
+    // With the broker enabled, MemoryBroker::service() is the sole owner of
+    // Warning/Critical donor reclamation. This avoids duplicate reclaim scans
+    // in one frame. The legacy cache-only policy remains for broker-disabled
+    // configurations.
+    if (!broker_.isReady())
     {
         if (
+            current ==
+            MemoryPressure::Warning
+        )
+        {
+            const AssetCache::Stats before =
+                assets_.stats();
+
+            const uint8_t percent =
+                config_.warningCachePercent > 100
+                    ? 100
+                    : config_.warningCachePercent;
+
+            if (before.budgetBytes != 0)
+            {
+                const size_t target =
+                    (
+                        before.budgetBytes *
+                        percent
+                    ) /
+                    100;
+
+                if (before.usedBytes > target)
+                {
+                    assets_.trimToBytes(
+                        target
+                    );
+                }
+            }
+            else if (
+                stateChanged &&
+                before.usedBytes != 0
+            )
+            {
+                const size_t target =
+                    (
+                        before.usedBytes *
+                        percent
+                    ) /
+                    100;
+
+                assets_.trimToBytes(
+                    target
+                );
+            }
+
+            const AssetCache::Stats after =
+                assets_.stats();
+
+            acted =
+                after.usedBytes <
+                    before.usedBytes;
+        }
+        else if (
+            current ==
+                MemoryPressure::Critical &&
             config_.
                 purgeUnpinnedOnCritical
         )
         {
             acted =
-                assets_.purgeUnpinned() > 0 ||
-                acted;
+                assets_.purgeUnpinned() >
+                    0;
         }
     }
 
