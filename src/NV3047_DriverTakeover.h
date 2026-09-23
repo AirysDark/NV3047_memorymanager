@@ -27,6 +27,8 @@ void nv3047_memorymanager_takeover_profiling_changed(
     bool enabled
 );
 
+void nv3047_memorymanager_takeover_auto_memory_ending();
+
 #ifdef __cplusplus
 }
 #endif
