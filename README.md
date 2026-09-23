@@ -50,6 +50,7 @@ Performance work is concentrated inside this repository:
 - duplicate pressure reclaim passes were removed; MemoryBroker owns broker-enabled pressure reclamation
 - MemoryBroker checks cached pressure before scanning clients/leases
 - redundant autoruntime semaphore operations were removed from active frame callbacks
+- frame scratch reset/allocation uses its own short critical section instead of the global allocation-table semaphore
 - profiling is optional and disabled by default
 - all normal tuning defaults are centralized in `NV3047_MemoryConfig.h`
 
