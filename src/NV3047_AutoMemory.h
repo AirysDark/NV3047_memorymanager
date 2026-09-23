@@ -115,6 +115,13 @@ public:
 
     bool validate() const;
 
+    void setPerformanceProfiling(
+        bool enabled,
+        bool reset = true
+    );
+
+    bool performanceProfilingEnabled() const;
+
     AutoMemoryPerformanceStats
         performanceStats() const;
 
