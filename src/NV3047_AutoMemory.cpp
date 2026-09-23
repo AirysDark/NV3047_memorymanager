@@ -581,7 +581,7 @@ bool AutoMemory::registerBrokerClients()
                     driver_fixed_bytes_
             )
             {
-                driverFixedBytes +=
+                driver_fixed_bytes_ +=
                     totalDMA;
             }
         }
@@ -599,7 +599,7 @@ bool AutoMemory::registerBrokerClients()
         driver_fixed_bytes_;
 
     driverConfig.softLimitBytes =
-        driverFixedBytes;
+        driver_fixed_bytes_;
 
     driverConfig.backgroundAfterMs = 0;
     driverConfig.idleAfterMs = 0;
