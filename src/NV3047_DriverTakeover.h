@@ -23,11 +23,43 @@ nv3047_memorymanager_provider_v1();
 
 bool nv3047_memorymanager_driver_bridge_active();
 
+void nv3047_memorymanager_takeover_profiling_changed(
+    bool enabled
+);
+
 #ifdef __cplusplus
 }
 #endif
 
 namespace NV3047Memory {
+
+struct DriverTakeoverPerformanceStats
+{
+    uint32_t providerReadyCalls = 0;
+    uint32_t providerFrontCalls = 0;
+    uint32_t providerDrawCalls = 0;
+    uint32_t providerSwapCalls = 0;
+
+    uint32_t providerBeginFrameCalls = 0;
+    uint32_t providerBeginFrameResets = 0;
+    uint32_t providerBeginFrameNoOps = 0;
+
+    uint32_t providerServiceCalls = 0;
+    uint32_t providerServiceFastExits = 0;
+    uint32_t providerServiceFullPasses = 0;
+
+    uint32_t providerDMAAcquireCalls = 0;
+    uint32_t providerDMAReleaseCalls = 0;
+
+    uint64_t totalProviderServiceUs = 0;
+    uint32_t maxProviderServiceUs = 0;
+};
+
+DriverTakeoverPerformanceStats
+driverTakeoverPerformanceStats();
+
+void resetDriverTakeoverPerformanceStats();
+
 namespace Detail {
 
 class DriverTakeoverAutoRegister final {
