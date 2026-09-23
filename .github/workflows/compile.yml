@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - memory_manager_overhaul_v1
   pull_request:
 
 jobs:
@@ -31,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: AirysDark/NV3047_drivers
-          ref: driver_overhaul_v2
+          ref: driver_overhaul_v3
           path: external/NV3047_drivers
 
       - name: Compile include-only automatic runtime
