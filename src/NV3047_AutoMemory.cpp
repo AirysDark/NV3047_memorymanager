@@ -300,38 +300,6 @@ bool AutoMemory::beginFrameIfNeeded()
 
     return reset;
 }
-bool AutoMemory::serviceDue(
-    uint32_t nowMs
-) const
-{
-    if (!ready_)
-    {
-        return false;
-    }
-
-    if (
-        !driver_usage_synced_ ||
-        assets_.usageRevision() !=
-            synced_asset_revision_ ||
-        manager_->pressure() !=
-            last_pressure_
-    )
-    {
-        return true;
-    }
-
-    if (
-        manager_->
-            serviceDue(nowMs)
-    )
-    {
-        return true;
-    }
-
-    return
-        broker_.serviceDue(nowMs);
-}
-
 void AutoMemory::service()
 {
     if (!ready_)
