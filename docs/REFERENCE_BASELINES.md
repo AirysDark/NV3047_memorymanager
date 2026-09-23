@@ -4,22 +4,28 @@ These are the read-only source branches used when developing `NV3047_memorymanag
 
 ## NV3047_drivers
 
-Branch:
+Active performance reference branch:
+
+```text
+driver_overhaul_v3
+```
+
+Current observed V3 head:
+
+```text
+d718d71eac960b4b876f4afd358d0cf6a0a09b59
+```
+
+Historical V2 baseline branch:
 
 ```text
 driver_overhaul_v2
 ```
 
-Original reference commit:
+Original pre-integration reference commit:
 
 ```text
 25e0b825b72683b7d88b42652e2ba013c540e042
-```
-
-Current observed branch head after external integration changes:
-
-```text
-7fa9382de2709121b8a33c9ae56318f7acef6d61
 ```
 
 Important memory-related files:
@@ -43,9 +49,11 @@ Observed production defaults / behavior:
 - PSRAM + 8-bit framebuffer allocation caps
 - zero buffers on initialization
 - without an external provider, local driver `MemoryManager` owns front/draw buffer indexes
-- current branch can delegate framebuffer ownership through `NV3047MemoryProviderV1`
-- current branch can delegate the persistent 9,600-byte DMA fill buffer through the same provider
+- V3 preserves the `NV3047MemoryProviderV1` takeover ABI
+- V3 delegates the persistent 9,600-byte DMA fill buffer through the same provider
 - once a provider is registered, takeover failure does not silently create a competing local framebuffer owner
+- V3 caches the active draw-buffer pointer once per frame rather than resolving it through the provider for every drawing primitive
+- V3 refreshes that cached pointer after successful buffer-role swaps
 - high-level `NV3047_Driver::fillScreen()` uses framebuffer clear + present rather than the HAL fill-buffer path
 
 ## NV3047_UI
@@ -77,12 +85,12 @@ Observed memory/integration behavior:
 - `UIDriverStats` exposes framebuffer count, size, allocated bytes, free managed memory and largest free managed block
 - UI presentation cadence remains owned by the driver
 - UI consumes the driver's already-mapped touch coordinates
-- UI is explicitly tuned to `driver_overhaul_v2`
+- the UI reference branch predates Driver V3 and remains read-only during Memory Manager Overhaul V1
 
 ## Notes
 
 - The UI branch name is hyphenated: `ui-overhaul-v2`.
-- The driver branch name uses underscores: `driver_overhaul_v2`.
+- The active driver branch name is `driver_overhaul_v3`.
 - The UI repository remains unchanged/read-only.
 - The driver branch now contains provider integration changes made outside this memory-manager development pass.
 - This pass modifies only `NV3047_memorymanager`; it does not make further driver/UI changes.
