@@ -242,8 +242,21 @@ public:
     size_t scratchCapacity() const;
     size_t scratchUsed() const;
 
+    // getStats() is an explicit fresh diagnostic sample.
     MemoryStats getStats() const;
+
+    // Hot-path pressure reads use the most recent sampled state and never
+    // perform heap-capability queries themselves.
+    MemoryStats cachedStats() const;
     MemoryPressure pressure() const;
+
+    // Refresh the cached heap/pressure snapshot when dirty or due. Returns
+    // true only when a real heap sample was taken.
+    bool refreshStats(
+        bool force = false
+    );
+
+    uint32_t heapSampleCount() const;
 
     void setPressureCallback(
         PressureCallback callback
@@ -297,6 +310,12 @@ private:
     MemoryPressure last_pressure_;
     uint32_t last_monitor_ms_;
 
+    mutable MemoryStats cached_stats_;
+    mutable bool cached_stats_valid_;
+    mutable bool heap_stats_dirty_;
+
+    uint32_t heap_sample_count_;
+
     void lock() const;
     void unlock() const;
 
@@ -340,6 +359,9 @@ private:
     HeapStats readHeap(
         uint32_t caps
     ) const;
+
+    MemoryStats sampleStats() const;
+    void markHeapStatsDirty();
 
     MemoryPressure evaluatePressure(
         const MemoryStats& stats
