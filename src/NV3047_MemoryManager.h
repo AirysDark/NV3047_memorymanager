@@ -229,8 +229,10 @@ public:
 
     bool validate() const;
 
-    // Per-frame transient arena.
+    // Per-frame transient arena. beginFrameIfNeeded() returns true only when
+    // scratch state actually required a reset.
     void beginFrame();
+    bool beginFrameIfNeeded();
     void* scratch(
         size_t bytes,
         size_t alignment = 4
@@ -242,6 +244,7 @@ public:
 
     size_t scratchCapacity() const;
     size_t scratchUsed() const;
+    bool scratchWasUsed() const;
 
     // getStats() is an explicit fresh diagnostic sample.
     MemoryStats getStats() const;
@@ -257,6 +260,15 @@ public:
         bool force = false
     );
 
+    bool refreshStatsAt(
+        uint32_t nowMs,
+        bool force = false
+    );
+
+    bool serviceDue(
+        uint32_t nowMs
+    ) const;
+
     uint32_t heapSampleCount() const;
 
     void setPressureCallback(
@@ -264,6 +276,7 @@ public:
     );
 
     void service();
+    void service(uint32_t nowMs);
 
     void dump(Stream& output = Serial) const;
 
@@ -307,6 +320,7 @@ private:
     size_t scratch_capacity_;
     size_t scratch_offset_;
     size_t scratch_peak_;
+    volatile bool scratch_touched_;
     MemoryRegion scratch_region_;
 
     PressureCallback pressure_callback_;
