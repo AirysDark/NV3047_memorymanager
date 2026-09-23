@@ -107,13 +107,14 @@ void FramebufferPair::end()
 
 bool FramebufferPair::isReady() const
 {
+    // Hot-path readiness is intentionally constant-time. Framebuffer ownership
+    // is established at begin() and remains stable until end(); deep ownership
+    // verification belongs in AutoMemory::validate(), not every draw/swap.
     return
         manager_ != nullptr &&
         manager_->isReady() &&
         buffer_a_ != nullptr &&
-        buffer_b_ != nullptr &&
-        manager_->owns(buffer_a_) &&
-        manager_->owns(buffer_b_);
+        buffer_b_ != nullptr;
 }
 
 uint16_t FramebufferPair::width() const
