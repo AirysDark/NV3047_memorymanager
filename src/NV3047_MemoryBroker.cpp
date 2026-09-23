@@ -410,14 +410,16 @@ void MemoryBroker::end()
 
 bool MemoryBroker::isReady() const
 {
+    // begin() establishes control-arena ownership and end() clears it.
+    // Avoid locking/scanning MemoryManager's allocation table on every broker
+    // method; validate() remains the explicit deep integrity check.
     return
         ready_ &&
         manager_ &&
         manager_->isReady() &&
         permanent_arena_ &&
-        manager_->owns(
-            permanent_arena_
-        );
+        clients_ &&
+        leases_;
 }
 
 MemoryBroker::ClientRecord*
