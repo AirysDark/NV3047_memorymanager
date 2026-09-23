@@ -2306,6 +2306,9 @@ bool MemoryBroker::validate() const
 {
     if (
         !isReady() ||
+        !manager_->owns(
+            permanent_arena_
+        ) ||
         !manager_->validate()
     )
     {
