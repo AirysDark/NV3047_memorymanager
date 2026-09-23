@@ -42,6 +42,25 @@ struct AutoMemoryConfig
     uint8_t warningCachePercent = 75;
     bool purgeUnpinnedOnCritical = true;
     bool resetScratchOnCritical = true;
+
+    // Disabled by default so profiling itself has zero micros() overhead in
+    // production. Enable only while measuring the manager hot path.
+    bool enablePerformanceProfiling = false;
+};
+
+struct AutoMemoryPerformanceStats
+{
+    uint32_t beginFrameCalls = 0;
+    uint32_t serviceCalls = 0;
+    uint32_t heapSamplePasses = 0;
+    uint32_t brokerUsageSyncs = 0;
+    uint32_t assetUsageSyncs = 0;
+
+    uint64_t totalBeginFrameUs = 0;
+    uint32_t maxBeginFrameUs = 0;
+
+    uint64_t totalServiceUs = 0;
+    uint32_t maxServiceUs = 0;
 };
 
 struct FragmentationStats
@@ -96,6 +115,11 @@ public:
 
     bool validate() const;
 
+    AutoMemoryPerformanceStats
+        performanceStats() const;
+
+    void resetPerformanceStats();
+
     void dump(
         Stream& output = Serial
     ) const;
@@ -124,13 +148,22 @@ private:
     MemoryPressure last_pressure_;
     uint32_t pressure_actions_;
 
+    size_t driver_fixed_bytes_;
+    bool driver_usage_synced_;
+    uint32_t synced_asset_revision_;
+
+    AutoMemoryPerformanceStats
+        performance_stats_;
+
     void applyPressurePolicy(
         MemoryPressure current,
         bool stateChanged
     );
 
     bool registerBrokerClients();
-    void syncBrokerUsage();
+    bool syncBrokerUsage(
+        bool force = false
+    );
 
     static size_t reclaimAssets(
         void* userData,
