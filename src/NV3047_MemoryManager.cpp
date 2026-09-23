@@ -2064,10 +2064,7 @@ void MemoryManager::service(
     uint32_t nowMs
 )
 {
-    if (
-        !ready_ ||
-        !serviceDue(nowMs)
-    )
+    if (!serviceDue(nowMs))
     {
         return;
     }
