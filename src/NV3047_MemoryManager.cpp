@@ -21,6 +21,7 @@ MemoryManager::MemoryManager()
       active_allocations_(0),
       successful_allocations_(0),
       failed_allocations_(0),
+      scratch_mux_(portMUX_INITIALIZER_UNLOCKED),
       scratch_base_(nullptr),
       scratch_capacity_(0),
       scratch_offset_(0),
@@ -1414,13 +1415,7 @@ bool MemoryManager::validate() const
             bytes !=
                 tracked_bytes_ ||
             count !=
-                active_allocations_ ||
-            scratch_offset_ >
-                scratch_capacity_ ||
-            (
-                scratch_capacity_ != 0 &&
-                !scratch_base_
-            )
+                active_allocations_
         )
     )
     {
@@ -1428,6 +1423,27 @@ bool MemoryManager::validate() const
     }
 
     unlock();
+
+    if (!valid)
+    {
+        return false;
+    }
+
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
+    valid =
+        scratch_offset_ <=
+            scratch_capacity_ &&
+        (
+            scratch_capacity_ == 0 ||
+            scratch_base_ != nullptr
+        );
+
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     return valid;
 }
@@ -1470,7 +1486,9 @@ void* MemoryManager::scratch(
         return nullptr;
     }
 
-    lock();
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
 
     const uintptr_t base =
         reinterpret_cast<uintptr_t>(
@@ -1486,8 +1504,11 @@ void* MemoryManager::scratch(
             (alignment - 1)
     )
     {
-        ++failed_allocations_;
-        unlock();
+        portEXIT_CRITICAL(
+            &scratch_mux_
+        );
+
+        noteFailure();
         return nullptr;
     }
 
@@ -1515,8 +1536,11 @@ void* MemoryManager::scratch(
             )
     )
     {
-        ++failed_allocations_;
-        unlock();
+        portEXIT_CRITICAL(
+            &scratch_mux_
+        );
+
+        noteFailure();
         return nullptr;
     }
 
@@ -1537,7 +1561,9 @@ void* MemoryManager::scratch(
             aligned
         );
 
-    unlock();
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     return result;
 }
@@ -1549,9 +1575,15 @@ void MemoryManager::resetScratch()
         return;
     }
 
-    lock();
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
     scratch_offset_ = 0;
-    unlock();
+
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 }
 
 size_t MemoryManager::scratchMark() const
@@ -1568,38 +1600,57 @@ bool MemoryManager::rewindScratch(
         return false;
     }
 
-    lock();
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
 
     if (mark > scratch_offset_)
     {
-        unlock();
+        portEXIT_CRITICAL(
+            &scratch_mux_
+        );
+
         return false;
     }
 
     scratch_offset_ =
         mark;
 
-    unlock();
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     return true;
 }
 
 size_t MemoryManager::scratchCapacity() const
 {
-    lock();
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
     const size_t value =
         scratch_capacity_;
-    unlock();
+
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     return value;
 }
 
 size_t MemoryManager::scratchUsed() const
 {
-    lock();
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
     const size_t value =
         scratch_offset_;
-    unlock();
+
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     return value;
 }
@@ -1666,6 +1717,18 @@ MemoryStats MemoryManager::sampleStats() const
     stats.activeAllocations =
         active_allocations_;
 
+    stats.successfulAllocations =
+        successful_allocations_;
+
+    stats.failedAllocations =
+        failed_allocations_;
+
+    unlock();
+
+    portENTER_CRITICAL(
+        &scratch_mux_
+    );
+
     stats.scratchCapacity =
         scratch_capacity_;
 
@@ -1675,13 +1738,9 @@ MemoryStats MemoryManager::sampleStats() const
     stats.scratchPeakUsed =
         scratch_peak_;
 
-    stats.successfulAllocations =
-        successful_allocations_;
-
-    stats.failedAllocations =
-        failed_allocations_;
-
-    unlock();
+    portEXIT_CRITICAL(
+        &scratch_mux_
+    );
 
     stats.pressure =
         evaluatePressure(stats);
