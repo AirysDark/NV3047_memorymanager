@@ -275,7 +275,12 @@ public:
 
     bool validate() const;
 
+    bool serviceDue(
+        uint32_t nowMs
+    ) const;
+
     void service();
+    void service(uint32_t nowMs);
 
     bool clientStats(
         BrokerClientId client,
