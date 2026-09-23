@@ -121,7 +121,13 @@ public:
             return true;
         }
 
-        if (!broker_.isReady())
+        // A valid driver client exists only after broker registration
+        // completed successfully and is cleared during end(). This avoids an
+        // out-of-line broker readiness call in the per-frame service gate.
+        if (
+            driver_client_ ==
+                INVALID_BROKER_CLIENT
+        )
         {
             return false;
         }
