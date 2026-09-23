@@ -2475,6 +2475,7 @@ void MemoryBroker::service()
     last_service_ms_ =
         now;
 
+    // Activity decay is cheap and remains periodic.
     portENTER_CRITICAL(
         &mux_
     );
@@ -2483,7 +2484,50 @@ void MemoryBroker::service()
         now
     );
 
+    portEXIT_CRITICAL(
+        &mux_
+    );
+
+    // Pressure is a cached MemoryManager value in Overhaul V1. Check it
+    // before scanning client/lease tables so Normal pressure exits quickly.
+    const MemoryPressure pressure =
+        manager_->pressure();
+
+    uint8_t percent = 0;
+    BrokerReclaimReason reason =
+        BrokerReclaimReason::WarningPressure;
+
+    if (
+        pressure ==
+        MemoryPressure::Critical
+    )
+    {
+        percent =
+            config_.
+                criticalReclaimPercent;
+
+        reason =
+            BrokerReclaimReason::CriticalPressure;
+    }
+    else if (
+        pressure ==
+        MemoryPressure::Warning
+    )
+    {
+        percent =
+            config_.
+                warningReclaimPercent;
+    }
+    else
+    {
+        return;
+    }
+
     size_t reclaimable = 0;
+
+    portENTER_CRITICAL(
+        &mux_
+    );
 
     for (
         uint8_t i = 0;
@@ -2521,39 +2565,6 @@ void MemoryBroker::service()
     );
 
     if (reclaimable == 0)
-    {
-        return;
-    }
-
-    const MemoryPressure pressure =
-        manager_->pressure();
-
-    uint8_t percent = 0;
-    BrokerReclaimReason reason =
-        BrokerReclaimReason::WarningPressure;
-
-    if (
-        pressure ==
-        MemoryPressure::Critical
-    )
-    {
-        percent =
-            config_.
-                criticalReclaimPercent;
-
-        reason =
-            BrokerReclaimReason::CriticalPressure;
-    }
-    else if (
-        pressure ==
-        MemoryPressure::Warning
-    )
-    {
-        percent =
-            config_.
-                warningReclaimPercent;
-    }
-    else
     {
         return;
     }
