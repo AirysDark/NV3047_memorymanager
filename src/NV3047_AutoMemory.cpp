@@ -160,6 +160,8 @@ bool AutoMemory::begin(
         true
     );
 
+    // Broker reclaim or fallback cache trimming may have changed asset
+    // accounting. Publish at most once after all recovery work is complete.
     syncBrokerUsage(false);
 
     last_pressure_ =
@@ -321,9 +323,6 @@ void AutoMemory::service()
     if (broker_.isReady())
     {
         broker_.service();
-
-        // Reclaim callbacks may have changed asset accounting.
-        syncBrokerUsage(false);
     }
 
     const MemoryPressure current =
