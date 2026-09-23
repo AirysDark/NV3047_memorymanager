@@ -710,9 +710,7 @@ void* AssetCache::get(
         index < 0 ||
         !manager_ ||
         !manager_->isReady() ||
-        !manager_->owns(
-            entries_[index].pointer
-        )
+        !entries_[index].pointer
     )
     {
         ++misses_;
@@ -739,9 +737,7 @@ const void* AssetCache::peek(
         index < 0 ||
         !manager_ ||
         !manager_->isReady() ||
-        !manager_->owns(
-            entries_[index].pointer
-        )
+        !entries_[index].pointer
     )
     {
         return nullptr;
@@ -770,9 +766,7 @@ bool AssetCache::pin(
         index < 0 ||
         !manager_ ||
         !manager_->isReady() ||
-        !manager_->owns(
-            entries_[index].pointer
-        )
+        !entries_[index].pointer
     )
     {
         return false;
@@ -799,9 +793,7 @@ bool AssetCache::unpin(
         index < 0 ||
         !manager_ ||
         !manager_->isReady() ||
-        !manager_->owns(
-            entries_[index].pointer
-        )
+        !entries_[index].pointer
     )
     {
         return false;
