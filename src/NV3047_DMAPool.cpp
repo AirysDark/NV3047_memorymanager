@@ -132,9 +132,6 @@ void* DMAPool::acquire()
     {
         if (
             blocks_[i].pointer &&
-            manager_->owns(
-                blocks_[i].pointer
-            ) &&
             !blocks_[i].inUse
         )
         {
@@ -206,8 +203,7 @@ bool DMAPool::owns(
     {
         if (
             blocks_[i].pointer ==
-            pointer &&
-            manager_->owns(pointer)
+            pointer
         )
         {
             return true;
@@ -280,9 +276,6 @@ uint8_t DMAPool::usedCount() const
     {
         if (
             blocks_[i].pointer &&
-            manager_->owns(
-                blocks_[i].pointer
-            ) &&
             blocks_[i].inUse
         )
         {
@@ -313,9 +306,6 @@ uint8_t DMAPool::freeCount() const
     {
         if (
             blocks_[i].pointer &&
-            manager_->owns(
-                blocks_[i].pointer
-            ) &&
             !blocks_[i].inUse
         )
         {
