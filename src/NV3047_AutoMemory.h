@@ -112,19 +112,24 @@ public:
         }
 
         if (
-            !driver_usage_synced_ ||
-            assets_.usageRevision() !=
-                synced_asset_revision_ ||
             manager_->pressure() !=
-                last_pressure_
+                last_pressure_ ||
+            manager_->
+                serviceDue(nowMs)
         )
         {
             return true;
         }
 
+        if (!broker_.isReady())
+        {
+            return false;
+        }
+
         if (
-            manager_->
-                serviceDue(nowMs)
+            !driver_usage_synced_ ||
+            assets_.usageRevision() !=
+                synced_asset_revision_
         )
         {
             return true;
