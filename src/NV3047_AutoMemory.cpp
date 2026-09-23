@@ -31,7 +31,11 @@ AutoMemory::AutoMemory()
       last_pressure_(
           MemoryPressure::Normal
       ),
-      pressure_actions_(0)
+      pressure_actions_(0),
+      driver_fixed_bytes_(0),
+      driver_usage_synced_(false),
+      synced_asset_revision_(0),
+      performance_stats_()
 {
 }
 
@@ -42,6 +46,12 @@ bool AutoMemory::begin(
     end();
 
     config_ = config;
+
+    driver_fixed_bytes_ = 0;
+    driver_usage_synced_ = false;
+    synced_asset_revision_ = 0;
+    performance_stats_ =
+        AutoMemoryPerformanceStats();
 
     manager_ =
         &MemoryManager::instance();
@@ -140,7 +150,7 @@ bool AutoMemory::begin(
 
     ready_ = true;
 
-    syncBrokerUsage();
+    syncBrokerUsage(true);
 
     const MemoryPressure initialPressure =
         manager_->pressure();
@@ -150,7 +160,7 @@ bool AutoMemory::begin(
         true
     );
 
-    syncBrokerUsage();
+    syncBrokerUsage(false);
 
     last_pressure_ =
         manager_->pressure();
@@ -206,6 +216,12 @@ void AutoMemory::end()
         MemoryPressure::Normal;
 
     pressure_actions_ = 0;
+
+    driver_fixed_bytes_ = 0;
+    driver_usage_synced_ = false;
+    synced_asset_revision_ = 0;
+    performance_stats_ =
+        AutoMemoryPerformanceStats();
 }
 
 bool AutoMemory::isReady() const
@@ -220,7 +236,41 @@ void AutoMemory::beginFrame()
         return;
     }
 
+    const bool profile =
+        config_.enablePerformanceProfiling;
+
+    const uint32_t start =
+        profile
+            ? micros()
+            : 0;
+
     manager_->beginFrame();
+
+    if (profile)
+    {
+        const uint32_t elapsed =
+            static_cast<uint32_t>(
+                micros() - start
+            );
+
+        ++performance_stats_.
+            beginFrameCalls;
+
+        performance_stats_.
+            totalBeginFrameUs +=
+                elapsed;
+
+        if (
+            elapsed >
+            performance_stats_.
+                maxBeginFrameUs
+        )
+        {
+            performance_stats_.
+                maxBeginFrameUs =
+                    elapsed;
+        }
+    }
 }
 
 void AutoMemory::service()
@@ -230,34 +280,93 @@ void AutoMemory::service()
         return;
     }
 
+    const bool profile =
+        config_.enablePerformanceProfiling;
+
+    const uint32_t start =
+        profile
+            ? micros()
+            : 0;
+
+    uint32_t samplesBefore = 0;
+
+    if (profile)
+    {
+        ++performance_stats_.
+            serviceCalls;
+
+        samplesBefore =
+            manager_->
+                heapSampleCount();
+    }
+
+    // MemoryManager::service() is now effectively free unless heap state is
+    // dirty or the configured monitor interval has elapsed.
     manager_->service();
 
-    syncBrokerUsage();
+    if (
+        profile &&
+        manager_->heapSampleCount() !=
+            samplesBefore
+    )
+    {
+        ++performance_stats_.
+            heapSamplePasses;
+    }
+
+    // Fixed driver bytes are published once. Asset usage is republished only
+    // when AssetCache's accounting revision changes.
+    syncBrokerUsage(false);
 
     if (broker_.isReady())
     {
         broker_.service();
 
-        // A reclaim callback can change cache usage immediately.
-        syncBrokerUsage();
+        // Reclaim callbacks may have changed asset accounting.
+        syncBrokerUsage(false);
     }
 
     const MemoryPressure current =
         manager_->pressure();
 
     const bool stateChanged =
-        current != last_pressure_;
+        current !=
+            last_pressure_;
 
+    // Broker pressure reclaim is owned by MemoryBroker::service(). This layer
+    // handles only non-broker fallback policy and scratch lifecycle.
     applyPressurePolicy(
         current,
         stateChanged
     );
 
-    syncBrokerUsage();
+    syncBrokerUsage(false);
 
-    // Recovery actions can change the pressure state immediately.
     last_pressure_ =
         manager_->pressure();
+
+    if (profile)
+    {
+        const uint32_t elapsed =
+            static_cast<uint32_t>(
+                micros() - start
+            );
+
+        performance_stats_.
+            totalServiceUs +=
+                elapsed;
+
+        if (
+            elapsed >
+            performance_stats_.
+                maxServiceUs
+        )
+        {
+            performance_stats_.
+                maxServiceUs =
+                    elapsed;
+        }
+    }
 }
 
 MemoryManager& AutoMemory::memory()
@@ -437,11 +546,11 @@ bool AutoMemory::registerBrokerClients()
         return true;
     }
 
-    size_t driverFixedBytes = 0;
+    driver_fixed_bytes_ = 0;
 
     if (framebuffer_ready_)
     {
-        driverFixedBytes =
+        driver_fixed_bytes_ =
             framebuffers_.totalBytes();
     }
 
@@ -469,7 +578,7 @@ bool AutoMemory::registerBrokerClients()
             if (
                 totalDMA <=
                 SIZE_MAX -
-                    driverFixedBytes
+                    driver_fixed_bytes_
             )
             {
                 driverFixedBytes +=
@@ -487,7 +596,7 @@ bool AutoMemory::registerBrokerClients()
         BrokerPriority::Critical;
 
     driverConfig.minimumBytes =
-        driverFixedBytes;
+        driver_fixed_bytes_;
 
     driverConfig.softLimitBytes =
         driverFixedBytes;
@@ -515,9 +624,11 @@ bool AutoMemory::registerBrokerClients()
 
     broker_.setObservedUsage(
         driver_client_,
-        driverFixedBytes,
+        driver_fixed_bytes_,
         0
     );
+
+    driver_usage_synced_ = true;
 
     BrokerClientConfig uiConfig;
 
@@ -600,81 +711,87 @@ bool AutoMemory::registerBrokerClients()
         INVALID_BROKER_CLIENT;
 }
 
-void AutoMemory::syncBrokerUsage()
+bool AutoMemory::syncBrokerUsage(
+    bool force
+)
 {
     if (!broker_.isReady())
     {
-        return;
+        return false;
     }
+
+    bool changed = false;
 
     if (
         driver_client_ !=
-        INVALID_BROKER_CLIENT
+            INVALID_BROKER_CLIENT &&
+        (
+            force ||
+            !driver_usage_synced_
+        )
     )
     {
-        size_t driverFixedBytes = 0;
-
-        if (framebuffer_ready_)
-        {
-            driverFixedBytes =
-                framebuffers_.totalBytes();
-        }
-
-        if (dma_ready_)
-        {
-            const size_t dmaBytes =
-                dma_pool_.blockBytes();
-
-            const size_t dmaCount =
-                dma_pool_.blockCount();
-
-            if (
-                dmaCount != 0 &&
-                dmaBytes <=
-                    (
-                        SIZE_MAX /
-                        dmaCount
-                    )
-            )
-            {
-                const size_t totalDMA =
-                    dmaBytes *
-                    dmaCount;
-
-                if (
-                    totalDMA <=
-                    SIZE_MAX -
-                        driverFixedBytes
-                )
-                {
-                    driverFixedBytes +=
-                        totalDMA;
-                }
-            }
-        }
-
         broker_.setObservedUsage(
             driver_client_,
-            driverFixedBytes,
+            driver_fixed_bytes_,
             0
         );
+
+        driver_usage_synced_ = true;
+        changed = true;
     }
 
     if (
         asset_client_ !=
-        INVALID_BROKER_CLIENT
+            INVALID_BROKER_CLIENT
     )
     {
-        const AssetCache::Stats cache =
-            assets_.stats();
+        const uint32_t revision =
+            assets_.usageRevision();
 
-        broker_.setObservedUsage(
-            asset_client_,
-            cache.usedBytes,
-            cache.reclaimableBytes,
-            MemoryRegion::PSRAM
-        );
+        if (
+            force ||
+            revision !=
+                synced_asset_revision_
+        )
+        {
+            const AssetCache::Stats cache =
+                assets_.stats();
+
+            broker_.setObservedUsage(
+                asset_client_,
+                cache.usedBytes,
+                cache.reclaimableBytes,
+                MemoryRegion::PSRAM
+            );
+
+            synced_asset_revision_ =
+                revision;
+
+            changed = true;
+
+            if (
+                config_.
+                    enablePerformanceProfiling
+            )
+            {
+                ++performance_stats_.
+                    assetUsageSyncs;
+            }
+        }
     }
+
+    if (
+        changed &&
+        config_.
+            enablePerformanceProfiling
+    )
+    {
+        ++performance_stats_.
+            brokerUsageSyncs;
+    }
+
+    return changed;
 }
 
 void AutoMemory::applyPressurePolicy(
@@ -684,62 +801,8 @@ void AutoMemory::applyPressurePolicy(
 {
     bool acted = false;
 
-    if (broker_.isReady())
-    {
-        if (
-            stateChanged &&
-            current ==
-                MemoryPressure::Warning
-        )
-        {
-            const BrokerStats stats =
-                broker_.stats();
-
-            size_t target =
-                (
-                    stats.reclaimableBytes *
-                    config_.broker.
-                        warningReclaimPercent
-                ) /
-                100;
-
-            if (
-                target != 0 &&
-                broker_.reclaimFor(
-                    INVALID_BROKER_CLIENT,
-                    target,
-                    BrokerReclaimReason::
-                        WarningPressure
-                ) > 0
-            )
-            {
-                acted = true;
-            }
-        }
-        else if (
-            stateChanged &&
-            current ==
-                MemoryPressure::Critical
-        )
-        {
-            const BrokerStats stats =
-                broker_.stats();
-
-            if (
-                stats.reclaimableBytes != 0 &&
-                broker_.reclaimFor(
-                    INVALID_BROKER_CLIENT,
-                    stats.reclaimableBytes,
-                    BrokerReclaimReason::
-                        CriticalPressure
-                ) > 0
-            )
-            {
-                acted = true;
-            }
-        }
-    }
-    else if (
+    if (
+        !broker_.isReady() &&
         current ==
         MemoryPressure::Warning
     )
@@ -907,7 +970,7 @@ size_t AutoMemory::emergencyPurge()
 
     size_t freed = 0;
 
-    syncBrokerUsage();
+    syncBrokerUsage(true);
 
     if (broker_.isReady())
     {
@@ -940,7 +1003,7 @@ size_t AutoMemory::emergencyPurge()
         ++pressure_actions_;
     }
 
-    syncBrokerUsage();
+    syncBrokerUsage(false);
 
     return freed;
 }
@@ -990,6 +1053,18 @@ bool AutoMemory::validate() const
     }
 
     return true;
+}
+
+AutoMemoryPerformanceStats
+AutoMemory::performanceStats() const
+{
+    return performance_stats_;
+}
+
+void AutoMemory::resetPerformanceStats()
+{
+    performance_stats_ =
+        AutoMemoryPerformanceStats();
 }
 
 void AutoMemory::dump(
