@@ -51,10 +51,23 @@ struct AutoMemoryConfig
 struct AutoMemoryPerformanceStats
 {
     uint32_t beginFrameCalls = 0;
+    uint32_t beginFrameResets = 0;
+    uint32_t beginFrameNoOps = 0;
+
     uint32_t serviceCalls = 0;
+    uint32_t serviceFastExits = 0;
+    uint32_t serviceFullPasses = 0;
+
     uint32_t heapSamplePasses = 0;
+
+    uint32_t brokerServiceDuePasses = 0;
+    uint32_t brokerServiceSkipped = 0;
+
     uint32_t brokerUsageSyncs = 0;
+    uint32_t brokerUsageSyncSkips = 0;
     uint32_t assetUsageSyncs = 0;
+
+    uint32_t pressurePolicyActions = 0;
 
     uint64_t totalBeginFrameUs = 0;
     uint32_t maxBeginFrameUs = 0;
@@ -87,7 +100,14 @@ public:
     bool isReady() const;
 
     void beginFrame();
+    bool beginFrameIfNeeded();
+
+    bool serviceDue(
+        uint32_t nowMs
+    ) const;
+
     void service();
+    void service(uint32_t nowMs);
 
     MemoryManager& memory();
     FramebufferPair& framebuffers();
@@ -162,7 +182,7 @@ private:
     AutoMemoryPerformanceStats
         performance_stats_;
 
-    void applyPressurePolicy(
+    bool applyPressurePolicy(
         MemoryPressure current,
         bool stateChanged
     );
